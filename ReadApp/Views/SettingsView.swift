@@ -15,8 +15,20 @@ struct SettingsView: View {
     
     var body: some View {
         NavigationView {
-            Form {
-                Section(header: Text("用户信息")) {
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(UIColor.systemBackground),
+                        Color.blue.opacity(0.05),
+                        Color(UIColor.systemBackground)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+
+                Form {
+                    Section(header: Text("用户信息")) {
                     HStack {
                         Text("用户名")
                         Spacer()
@@ -62,6 +74,11 @@ struct SettingsView: View {
                     
                     Toggle("正文净化", isOn: $preferences.useReplaceRuleSanitization)
                     Text("启用轻阅读替换净化规则（默认开启）")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("无极滚动阅读", isOn: $preferences.infiniteScrollReadingEnabled)
+                    Text("开启后，普通阅读会自动拼接后续章节并随滚动自动切章；默认关闭")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -248,6 +265,8 @@ struct SettingsView: View {
                 Task {
                     await loadTTSName()
                 }
+            }
+            .hideScrollBackground()
             }
         }
     }

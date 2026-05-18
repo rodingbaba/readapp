@@ -11,91 +11,150 @@ struct LoginView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                Spacer()
-                
-                Image(systemName: "book.fill")
-                    .font(.system(size: 80))
-                    .foregroundColor(.blue)
-                
-                Text("ReadApp")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                
-                Spacer()
-                
-                if !preferences.serverURL.isEmpty {
-                    HStack {
-                        Text("服务器:")
-                            .foregroundColor(.secondary)
-                        Text(preferences.serverURL)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        Button(action: { showServerSettings = true }) {
-                            Image(systemName: "gear")
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
-                
-                VStack(spacing: 16) {
-                    TextField("用户名", text: $username)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                        .disabled(isLoading)
-                    
-                    SecureField("密码", text: $password)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .disabled(isLoading)
-                    
-                    if let errorMessage = errorMessage {
-                        Text(errorMessage)
-                            .foregroundColor(.red)
-                            .font(.caption)
-                    }
-                    
-                    Button(action: handleLogin) {
-                        if isLoading {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 50)
-                        } else {
-                            Text("登录")
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 50)
-                        }
-                    }
-                    .background(canLogin ? Color.blue : Color.gray)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                    .disabled(!canLogin || isLoading)
-                }
-                .padding(.horizontal, 30)
-                
-                if preferences.serverURL.isEmpty {
-                    Button(action: { showServerSettings = true }) {
-                        HStack {
-                            Image(systemName: "server.rack")
-                            Text("设置服务器地址")
-                        }
-                        .foregroundColor(.blue)
-                    }
-                    .padding(.top, 10)
-                }
-                
-                Spacer()
+            ZStack {
+                backgroundGradient
+                contentStack
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showServerSettings) {
                 ServerSettingsView()
             }
         }
+    }
+
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [
+                Color.blue.opacity(0.18),
+                Color.purple.opacity(0.10),
+                Color(UIColor.systemBackground)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    private var contentStack: some View {
+        VStack(spacing: 22) {
+            Spacer()
+            logoBlock
+            Spacer()
+            formBlock
+                .padding(.horizontal, 28)
+            if preferences.serverURL.isEmpty {
+                serverButton
+                    .padding(.top, 8)
+            }
+            Spacer()
+        }
+    }
+
+    private var logoBlock: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "book.fill")
+                .font(.system(size: 64, weight: .semibold))
+                .foregroundColor(.blue)
+                .padding(22)
+                .liquidGlass(in: Circle())
+
+            Text("ReadApp")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+        }
+    }
+
+    private var formBlock: some View {
+        VStack(spacing: 14) {
+            if !preferences.serverURL.isEmpty {
+                serverSummaryRow
+            }
+            loginFields
+        }
+    }
+
+    private var serverSummaryRow: some View {
+        HStack {
+            Image(systemName: "server.rack")
+                .foregroundColor(.secondary)
+            Text(preferences.serverURL)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Spacer()
+            Button(action: { showServerSettings = true }) {
+                Image(systemName: "gear")
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .liquidGlass(in: Capsule())
+    }
+
+    private var loginFields: some View {
+        VStack(spacing: 12) {
+            TextField("用户名", text: $username)
+                .textContentType(.username)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .disabled(isLoading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .liquidGlass(in: Capsule())
+
+            SecureField("密码", text: $password)
+                .textContentType(.password)
+                .disabled(isLoading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .liquidGlass(in: Capsule())
+
+            if let errorMessage = errorMessage {
+                Text(errorMessage)
+                    .foregroundColor(.red)
+                    .font(.caption)
+            }
+
+            loginButton
+        }
+    }
+
+    private var loginButton: some View {
+        Button(action: handleLogin) {
+            ZStack {
+                if isLoading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                } else {
+                    Text("登录")
+                        .fontWeight(.semibold)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .foregroundColor(.white)
+            .liquidGlass(
+                tint: canLogin ? .accent : .neutral,
+                interactive: true,
+                in: Capsule()
+            )
+            .opacity(canLogin ? 1 : 0.5)
+        }
+        .disabled(!canLogin || isLoading)
+    }
+
+    private var serverButton: some View {
+        Button(action: { showServerSettings = true }) {
+            HStack {
+                Image(systemName: "server.rack")
+                Text("设置服务器地址")
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .liquidGlass(in: Capsule())
+        }
+        .foregroundColor(.blue)
     }
     
     private var canLogin: Bool {

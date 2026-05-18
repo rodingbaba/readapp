@@ -129,7 +129,7 @@ struct TTSRow: View {
     let tts: HttpTTS
     let isSelected: Bool
     let onSelect: () -> Void
-    
+
     var body: some View {
         Button(action: onSelect) {
             HStack {
@@ -137,25 +137,41 @@ struct TTSRow: View {
                     Text(tts.name)
                         .font(.headline)
                         .foregroundColor(isSelected ? .blue : .primary)
-                    
+
                     if let contentType = tts.contentType {
                         Text(contentType)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
-                
+
                 Spacer()
-                
+
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.blue)
                         .font(.title3)
                 }
             }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .background(
+                Group {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.blue.opacity(0.12))
+                            )
+                    }
+                }
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 }
 

@@ -157,6 +157,12 @@ class UserPreferences: ObservableObject {
         }
     }
 
+    @Published var infiniteScrollReadingEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(infiniteScrollReadingEnabled, forKey: "infiniteScrollReadingEnabled")
+        }
+    }
+
     @Published var ttsFadeEnabled: Bool {
         didSet {
             UserDefaults.standard.set(ttsFadeEnabled, forKey: "ttsFadeEnabled")
@@ -186,7 +192,10 @@ class UserPreferences: ObservableObject {
         get {
             if let data = UserDefaults.standard.data(forKey: "ttsProgress"),
                let dict = try? JSONDecoder().decode([String: [Int]].self, from: data) {
-                return dict.mapValues { ($0[0], $0[1]) }
+                return dict.compactMapValues { values in
+                    guard values.count >= 2 else { return nil }
+                    return (values[0], values[1])
+                }
             }
             return [:]
         }
@@ -206,6 +215,36 @@ class UserPreferences: ObservableObject {
     
     func getTTSProgress(bookUrl: String) -> (chapterIndex: Int, sentenceIndex: Int)? {
         return ttsProgress[bookUrl]
+    }
+
+    // 阅读锚点记录：bookUrl -> (chapterIndex, paragraphIndex)
+    private var readingProgress: [String: (Int, Int)] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "readingProgress"),
+               let dict = try? JSONDecoder().decode([String: [Int]].self, from: data) {
+                return dict.compactMapValues { values in
+                    guard values.count >= 2 else { return nil }
+                    return (values[0], values[1])
+                }
+            }
+            return [:]
+        }
+        set {
+            let dict = newValue.mapValues { [$0.0, $0.1] }
+            if let data = try? JSONEncoder().encode(dict) {
+                UserDefaults.standard.set(data, forKey: "readingProgress")
+            }
+        }
+    }
+
+    func saveReadingProgress(bookUrl: String, chapterIndex: Int, paragraphIndex: Int) {
+        var progress = readingProgress
+        progress[bookUrl] = (chapterIndex, paragraphIndex)
+        readingProgress = progress
+    }
+
+    func getReadingProgress(bookUrl: String) -> (chapterIndex: Int, paragraphIndex: Int)? {
+        return readingProgress[bookUrl]
     }
     
     private init() {
@@ -233,6 +272,12 @@ class UserPreferences: ObservableObject {
             self.useReplaceRuleSanitization = true
         } else {
             self.useReplaceRuleSanitization = UserDefaults.standard.bool(forKey: "useReplaceRuleSanitization")
+        }
+
+        if UserDefaults.standard.object(forKey: "infiniteScrollReadingEnabled") == nil {
+            self.infiniteScrollReadingEnabled = false
+        } else {
+            self.infiniteScrollReadingEnabled = UserDefaults.standard.bool(forKey: "infiniteScrollReadingEnabled")
         }
 
         if UserDefaults.standard.object(forKey: "ttsFadeEnabled") == nil {

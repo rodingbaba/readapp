@@ -52,19 +52,41 @@ struct BookListView: View {
     }
     
     var body: some View {
-        List {
-            ForEach(filteredAndSortedBooks) { book in
-                NavigationLink(destination: ReadingView(book: book)) {
-                    BookRow(book: book)
-                }
-                .contextMenu {
-                    Button(role: .destructive) {
-                        showingActionSheet = true
-                    } label: {
-                        Label("清除所有远程缓存", systemImage: "trash")
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(UIColor.systemBackground),
+                    Color.blue.opacity(0.06),
+                    Color(UIColor.systemBackground)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(filteredAndSortedBooks) { book in
+                        NavigationLink(destination: ReadingView(book: book)) {
+                            BookRow(book: book)
+                                .padding(14)
+                                .liquidGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                showingActionSheet = true
+                            } label: {
+                                Label("清除所有远程缓存", systemImage: "trash")
+                            }
+                        }
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
+            .liquidGlassContainer(spacing: 14)
         }
         .animation(.easeInOut(duration: 0.3), value: isReversed)
         .navigationTitle("书架")
@@ -87,7 +109,7 @@ struct BookListView: View {
                     .font(.caption)
                 }
             }
-            
+
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 NavigationLink(destination: SettingsView()) {
                     Image(systemName: "gearshape")
@@ -107,6 +129,9 @@ struct BookListView: View {
                     Text("加载中...")
                         .foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 32)
+                .padding(.vertical, 24)
+                .liquidGlass(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             } else if filteredAndSortedBooks.isEmpty && !apiService.books.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "magnifyingglass")
@@ -115,6 +140,9 @@ struct BookListView: View {
                     Text("未找到匹配的书籍")
                         .foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 32)
+                .padding(.vertical, 24)
+                .liquidGlass(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             }
         }
         .alert("错误", isPresented: .constant(apiService.errorMessage != nil)) {
@@ -161,42 +189,46 @@ struct BookListView: View {
 
 struct BookRow: View {
     let book: Book
-    
+
     var body: some View {
-        HStack(spacing: 12) {
-            // 封面图
+        HStack(spacing: 14) {
             AsyncImage(url: URL(string: book.displayCoverUrl ?? "")) { image in
                 image
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } placeholder: {
                 Rectangle()
-                    .fill(Color.gray.opacity(0.3))
+                    .fill(Color.gray.opacity(0.25))
                     .overlay(
                         Image(systemName: "book.fill")
                             .foregroundColor(.gray)
                     )
             }
-            .frame(width: 60, height: 80)
-            .cornerRadius(4)
-            
+            .frame(width: 62, height: 84)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.6)
+            )
+            .shadow(color: Color.black.opacity(0.15), radius: 6, y: 3)
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(book.name ?? "未知书名")
                     .font(.headline)
                     .lineLimit(1)
-                
+
                 Text(book.author ?? "未知作者")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                
+
                 if let latestChapter = book.latestChapterTitle {
                     Text("最新: \(latestChapter)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
-                
+
                 HStack {
                     if let durChapter = book.durChapterTitle {
                         Text("读至: \(durChapter)")
@@ -204,9 +236,9 @@ struct BookRow: View {
                             .foregroundColor(.blue)
                             .lineLimit(1)
                     }
-                    
+
                     Spacer()
-                    
+
                     if let total = book.totalChapterNum {
                         Text("\(total)章")
                             .font(.caption2)
@@ -214,8 +246,11 @@ struct BookRow: View {
                     }
                 }
             }
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 4)
     }
 }
 

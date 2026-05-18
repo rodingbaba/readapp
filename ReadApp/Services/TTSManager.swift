@@ -38,6 +38,9 @@ class TTSManager: NSObject, ObservableObject {
     // 当前段落下载 token，用于作废过期的异步下载 Task
     private var currentPlayToken = UUID()
 
+    // 当前 audioPlayer 实际正在播放的段落索引（章节名用 -1），nil 表示没有音频在播放
+    private var playingIndex: Int? = nil
+
     // 下一章预载
     private var nextChapterSentences: [String] = []  // 下一章的段落
     private var nextChapterCache: [Int: Data] = [:]  // 下一章的音频缓存（索引-1为章节名）
@@ -347,32 +350,36 @@ class TTSManager: NSObject, ObservableObject {
     func previousSentence() {
         if currentSentenceIndex > 0 {
             currentSentenceIndex -= 1
+            cancelFadeOut()
             currentPlayToken = UUID()
+            playingIndex = nil
             audioPlayer?.stop()
             audioPlayer?.delegate = nil
             audioPlayer = nil
-            
+
             // 保存进度
             UserPreferences.shared.saveTTSProgress(bookUrl: bookUrl, chapterIndex: currentChapterIndex, sentenceIndex: currentSentenceIndex)
-            
+
             if isPlaying {
                 speakNextSentence()
             }
         }
     }
-    
+
     // MARK: - 下一段
     func nextSentence() {
         if currentSentenceIndex < sentences.count - 1 {
             currentSentenceIndex += 1
+            cancelFadeOut()
             currentPlayToken = UUID()
+            playingIndex = nil
             audioPlayer?.stop()
             audioPlayer?.delegate = nil
             audioPlayer = nil
-            
+
             // 保存进度
             UserPreferences.shared.saveTTSProgress(bookUrl: bookUrl, chapterIndex: currentChapterIndex, sentenceIndex: currentSentenceIndex)
-            
+
             if isPlaying {
                 speakNextSentence()
             }
@@ -714,9 +721,11 @@ class TTSManager: NSObject, ObservableObject {
                 await MainActor.run {
                     guard self.currentPlayToken == token else { return }
                     isLoading = false
-                    logger.log("⚠️ 网络错误，尝试下一段", category: "TTS")
-                    currentSentenceIndex += 1
-                    speakNextSentence()
+                    logger.log("⚠️ 网络错误，1 秒后重试当前段落", category: "TTS")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        guard let self, self.isPlaying, !self.isPaused else { return }
+                        self.speakNextSentence()
+                    }
                 }
             }
         }
@@ -888,6 +897,7 @@ class TTSManager: NSObject, ObservableObject {
             audioPlayer?.stop()
             audioPlayer?.delegate = nil
             audioPlayer = nil
+            playingIndex = nil
 
             // 使用 AVAudioPlayer 播放下载的数据
             audioPlayer = try AVAudioPlayer(data: data)
@@ -903,7 +913,9 @@ class TTSManager: NSObject, ObservableObject {
 
             let success = audioPlayer?.play() ?? false
             if success {
-                logger.log("✅ 音频开始播放", category: "TTS")
+                // 记录当前 player 实际播放的索引
+                playingIndex = isReadingChapterTitle ? -1 : currentSentenceIndex
+                logger.log("✅ 音频开始播放 (playingIndex=\(playingIndex ?? -999))", category: "TTS")
                 isLoading = false
                 // 新音频已经起播，再关闭静音保活，避免段落切换间隙掉线
                 stopKeepAlive()
@@ -918,7 +930,12 @@ class TTSManager: NSObject, ObservableObject {
             } else {
                 logger.log("❌ 音频播放失败，跳过当前段落", category: "TTS错误")
                 isLoading = false
-                // 错误恢复：跳到下一段
+                audioPlayer?.delegate = nil
+                audioPlayer = nil
+                // 音频数据无法播放，清除坏缓存并跳到下一段
+                if !isReadingChapterTitle {
+                    audioCache.removeValue(forKey: currentSentenceIndex)
+                }
                 currentSentenceIndex += 1
                 speakNextSentence()
             }
@@ -926,8 +943,13 @@ class TTSManager: NSObject, ObservableObject {
             logger.log("❌ 创建 AVAudioPlayer 失败: \(error.localizedDescription)", category: "TTS错误")
             logger.log("错误详情: \(error)", category: "TTS错误")
             isLoading = false
-            // 错误恢复：跳到下一段
-            logger.log("⚠️ 音频解码失败，尝试下一段", category: "TTS")
+            audioPlayer?.delegate = nil
+            audioPlayer = nil
+            // 音频数据损坏，清除坏缓存并跳到下一段
+            logger.log("⚠️ 音频解码失败，跳过当前段落", category: "TTS")
+            if !isReadingChapterTitle {
+                audioCache.removeValue(forKey: currentSentenceIndex)
+            }
             currentSentenceIndex += 1
             speakNextSentence()
         }
@@ -1174,6 +1196,7 @@ class TTSManager: NSObject, ObservableObject {
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
         audioPlayer = nil
+        playingIndex = nil
         currentPlayToken = UUID()  // 作废任何正在进行的下载 Task
         isPlaying = false
         isPaused = false
@@ -1231,10 +1254,14 @@ class TTSManager: NSObject, ObservableObject {
         // 检查是否有预载的下一章数据
         if preloadedNextChapterIndex == currentChapterIndex, !nextChapterSentences.isEmpty {
             logger.log("使用已预载的下一章数据", category: "TTS")
-            
+
             // 停止当前播放
+            cancelFadeOut()
+            currentPlayToken = UUID()
             audioPlayer?.stop()
+            audioPlayer?.delegate = nil
             audioPlayer = nil
+            playingIndex = nil
             
             // 使用预载的数据
             sentences = nextChapterSentences
@@ -1268,10 +1295,14 @@ class TTSManager: NSObject, ObservableObject {
         
         // 没有预载数据，从缓存或网络加载
         logger.log("⚠️ 下一章未预载完成，尝试从缓存或网络加载", category: "TTS")
-        
+
         // 停止当前播放
+        cancelFadeOut()
+        currentPlayToken = UUID()
         audioPlayer?.stop()
+        audioPlayer?.delegate = nil
         audioPlayer = nil
+        playingIndex = nil
         
         Task {
             do {
@@ -1337,40 +1368,65 @@ class TTSManager: NSObject, ObservableObject {
 // MARK: - AVAudioPlayerDelegate
 extension TTSManager: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        // 忽略非当前 player 的回调（旧 player 释放时可能触发）
+        // 忽略非当前 player 的回调
         guard player === audioPlayer else {
             logger.log("⚠️ 忽略过期 player 的 didFinishPlaying 回调", category: "TTS")
             return
         }
-        logger.log("音频播放完成 - 成功: \(flag)", category: "TTS")
-        
+        logger.log("音频播放完成 - 成功: \(flag), playingIndex: \(playingIndex ?? -999), currentIndex: \(currentSentenceIndex)", category: "TTS")
+
         // 播放间隙启动保活
         startKeepAlive()
-        
+
+        guard flag else {
+            // flag=false 表示被系统中断（来电、音频路由变更等），不推进索引，重试当前段
+            logger.log("⚠️ 播放被中断（flag=false），重试当前段落", category: "TTS")
+            playingIndex = nil
+            if isPlaying && !isPaused {
+                if isReadingChapterTitle {
+                    isReadingChapterTitle = false
+                    speakChapterTitle()
+                } else {
+                    speakNextSentence()
+                }
+            }
+            return
+        }
+
+        // 验证 playingIndex 与当前索引一致，防止状态错乱
+        let finished = playingIndex
+        playingIndex = nil
+
         // 如果正在朗读章节名，播放完后开始朗读内容
         if isReadingChapterTitle {
             isReadingChapterTitle = false
             speakNextSentence()
             return
         }
-        
-        if flag {
-            // 播放下一句
-            currentSentenceIndex += 1
-            speakNextSentence()
-        } else {
-            logger.log("音频播放失败，跳过", category: "TTS错误")
-            currentSentenceIndex += 1
-            speakNextSentence()
+
+        // 确认完成的是我们期望的那个段落
+        guard finished == currentSentenceIndex else {
+            logger.log("⚠️ playingIndex(\(finished ?? -999)) 与 currentSentenceIndex(\(currentSentenceIndex)) 不一致，忽略", category: "TTS")
+            return
         }
+
+        // 播放下一句
+        currentSentenceIndex += 1
+        speakNextSentence()
     }
-    
+
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         guard player === audioPlayer else { return }
         if let error = error {
             logger.log("❌ 音频解码错误: \(error.localizedDescription)", category: "TTS错误")
         }
-        // 跳过这一句
+        playingIndex = nil
+        audioPlayer?.delegate = nil
+        audioPlayer = nil
+        // 解码错误，清除坏缓存，跳到下一段
+        if !isReadingChapterTitle {
+            audioCache.removeValue(forKey: currentSentenceIndex)
+        }
         currentSentenceIndex += 1
         speakNextSentence()
     }
