@@ -145,7 +145,10 @@ struct BookListView: View {
                 .liquidGlass(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             }
         }
-        .alert("错误", isPresented: .constant(apiService.errorMessage != nil)) {
+        .alert("错误", isPresented: Binding(
+            get: { apiService.errorMessage != nil },
+            set: { if !$0 { apiService.errorMessage = nil } }
+        )) {
             Button("确定") {
                 apiService.errorMessage = nil
             }
@@ -164,14 +167,35 @@ struct BookListView: View {
         }
     }
     
+    @MainActor
     private func loadBooks() async {
+        guard !isRefreshing else {
+            return
+        }
+
         isRefreshing = true
+        apiService.errorMessage = nil
+        defer {
+            isRefreshing = false
+        }
+
         do {
             try await apiService.fetchBookshelf()
         } catch {
+            guard !isCancellation(error) else {
+                return
+            }
             apiService.errorMessage = error.localizedDescription
         }
-        isRefreshing = false
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
     
     private func clearAllRemoteCache() {
@@ -253,4 +277,3 @@ struct BookRow: View {
         }
     }
 }
-

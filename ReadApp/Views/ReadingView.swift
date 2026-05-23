@@ -119,6 +119,10 @@ struct ReadingView: View {
     @State private var errorMessage: String?
     @State private var scrollProxy: ScrollViewProxy?
     @State private var shouldRestoreAfterTTSStop = true
+    @State private var readerViewportHeight: CGFloat = 0
+    @State private var visibleParagraphFrames: [ReaderPosition: ReaderParagraphFrame] = [:]
+    @State private var pendingScrollRetryCount = 0
+    @State private var pendingScrollGeneration = 0
 
     init(book: Book) {
         self.book = book
@@ -133,7 +137,6 @@ struct ReadingView: View {
                 .ignoresSafeArea()
 
             readerScrollView
-                .ignoresSafeArea(edges: .bottom)
 
             if showControls {
                 Group {
@@ -222,13 +225,17 @@ struct ReadingView: View {
             queueScroll(to: position, anchor: .center)
         }
         .onChange(of: ttsManager.isPlaying) { isPlaying in
-            if !isPlaying {
+            if isPlaying {
+                showControls = true
+                scrollToCurrentTTSPosition()
+            } else {
                 showControls = true
                 restoreAfterTTSStopIfNeeded()
             }
         }
         .onDisappear {
             saveProgressImmediately(visiblePosition)
+            clearPendingScroll()
             cancelLoadTasks()
             saveTask?.cancel()
         }
@@ -273,12 +280,16 @@ struct ReadingView: View {
                         }
 
                         Color.clear
-                            .frame(height: max(viewport.size.height * 0.55, 240))
+                            .frame(height: max(viewport.size.height * 0.75, 320))
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 18)
                 }
                 .coordinateSpace(name: "reader-scroll")
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear
+                        .frame(height: bottomContentInset)
+                }
                 .contentShape(Rectangle())
                 .simultaneousGesture(
                     TapGesture().onEnded {
@@ -288,14 +299,29 @@ struct ReadingView: View {
                     }
                 )
                 .onPreferenceChange(ReaderParagraphFrameKey.self) { frames in
+                    visibleParagraphFrames = framesByPosition(frames)
                     updateVisiblePosition(from: frames, viewportHeight: viewport.size.height)
+                    finishPendingScrollIfVisible()
                 }
                 .onAppear {
+                    readerViewportHeight = viewport.size.height
                     scrollProxy = proxy
                     attemptPendingScroll(animated: false)
                 }
+                .onChange(of: viewport.size.height) { height in
+                    readerViewportHeight = height
+                    finishPendingScrollIfVisible()
+                }
             }
         }
+    }
+
+    private var bottomContentInset: CGFloat {
+        guard showControls else {
+            return 24
+        }
+
+        return ttsManager.isPlaying ? 170 : 104
     }
 
     private var isLoadingAfterLastChapter: Bool {
@@ -441,6 +467,8 @@ struct ReadingView: View {
         visiblePosition = position
         pendingScrollPosition = position
         pendingScrollAnchor = .top
+        pendingScrollRetryCount = 0
+        pendingScrollGeneration += 1
         loadChapterIfNeeded(position.chapterIndex)
     }
 
@@ -559,9 +587,11 @@ struct ReadingView: View {
 
         currentChapterIndex = position.chapterIndex
         visiblePosition = position
+        ensureLoaded(for: position, resetIfMissing: resetIfMissing)
         pendingScrollPosition = position
         pendingScrollAnchor = anchor
-        ensureLoaded(for: position, resetIfMissing: resetIfMissing)
+        pendingScrollRetryCount = 0
+        pendingScrollGeneration += 1
         loadFollowingChapterIfNeeded(after: position.chapterIndex)
         attemptPendingScroll(animated: true)
         scheduleProgressSave(position)
@@ -623,9 +653,21 @@ struct ReadingView: View {
         jumpTo(position: position, resetIfMissing: false, anchor: .center)
     }
 
+    private func scrollToCurrentTTSPosition() {
+        let position = ReaderPosition(
+            chapterIndex: ttsManager.currentChapterIndex,
+            paragraphIndex: max(ttsManager.currentSentenceIndex, 0)
+        )
+        lastTTSPosition = position
+        ensureLoaded(for: position, resetIfMissing: false)
+        queueScroll(to: position, anchor: .center)
+    }
+
     private func queueScroll(to position: ReaderPosition, anchor: UnitPoint = .top) {
         pendingScrollPosition = position
         pendingScrollAnchor = anchor
+        pendingScrollRetryCount = 0
+        pendingScrollGeneration += 1
         attemptPendingScroll(animated: true)
     }
 
@@ -640,18 +682,103 @@ struct ReadingView: View {
         let target: ReaderScrollTarget = chapter.paragraphs.isEmpty
             ? .chapter(position.chapterIndex)
             : .paragraph(position.chapterIndex, paragraphIndex)
-        let anchor = pendingScrollAnchor
+        let anchor = effectiveScrollAnchor(for: pendingScrollAnchor)
+        let generation = pendingScrollGeneration
+        let attempt = pendingScrollRetryCount
 
-        pendingScrollPosition = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            if animated {
+        pendingScrollRetryCount += 1
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0.06 : 0.16)) {
+            guard pendingScrollGeneration == generation,
+                  pendingScrollPosition == position else {
+                return
+            }
+
+            if animated && attempt == 0 {
                 withAnimation(.easeInOut(duration: 0.22)) {
                     proxy.scrollTo(target, anchor: anchor)
                 }
             } else {
                 proxy.scrollTo(target, anchor: anchor)
             }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                guard pendingScrollGeneration == generation,
+                      pendingScrollPosition == position else {
+                    return
+                }
+
+                if finishPendingScrollIfVisible() {
+                    return
+                }
+
+                guard pendingScrollRetryCount < 14 else {
+                    clearPendingScroll()
+                    return
+                }
+
+                attemptPendingScroll(animated: false)
+            }
         }
+    }
+
+    @discardableResult
+    private func finishPendingScrollIfVisible() -> Bool {
+        guard let position = pendingScrollPosition,
+              targetIsSettled(position) else {
+            return false
+        }
+
+        clearPendingScroll()
+        return true
+    }
+
+    private func targetIsSettled(_ position: ReaderPosition) -> Bool {
+        guard let frame = visibleParagraphFrames[position] else {
+            return false
+        }
+
+        let visibleTop: CGFloat = 8
+        let visibleBottom = max(readerViewportHeight - bottomContentInset, visibleTop + 96)
+        let visibleCenter = (visibleTop + visibleBottom) / 2
+
+        if pendingScrollAnchor == .center {
+            return (frame.minY...frame.maxY).contains(visibleCenter)
+                || abs(((frame.minY + frame.maxY) / 2) - visibleCenter) < 80
+        }
+
+        if pendingScrollAnchor == .top {
+            return abs(frame.minY - visibleTop) < 80
+                || (frame.minY <= visibleTop && frame.maxY > visibleTop + 80)
+        }
+
+        return frame.maxY > visibleTop && frame.minY < visibleBottom
+    }
+
+    private func effectiveScrollAnchor(for anchor: UnitPoint) -> UnitPoint {
+        guard showControls, anchor == .center, readerViewportHeight > 0 else {
+            return anchor
+        }
+
+        let visibleTop: CGFloat = 8
+        let visibleBottom = max(readerViewportHeight - bottomContentInset, visibleTop + 96)
+        let visibleCenter = (visibleTop + visibleBottom) / 2
+        let y = min(max(visibleCenter / readerViewportHeight, 0.18), 0.50)
+        return UnitPoint(x: 0.5, y: y)
+    }
+
+    private func clearPendingScroll() {
+        pendingScrollPosition = nil
+        pendingScrollRetryCount = 0
+        pendingScrollGeneration += 1
+    }
+
+    private func framesByPosition(_ frames: [ReaderParagraphFrame]) -> [ReaderPosition: ReaderParagraphFrame] {
+        var result: [ReaderPosition: ReaderParagraphFrame] = [:]
+        for frame in frames {
+            result[ReaderPosition(chapterIndex: frame.chapterIndex, paragraphIndex: frame.paragraphIndex)] = frame
+        }
+        return result
     }
 
     private func preferredStartPosition(for chapter: ReaderChapter) -> ReaderPosition {
