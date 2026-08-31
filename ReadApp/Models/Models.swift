@@ -31,7 +31,6 @@ struct Book: Codable, Identifiable {
             // 如果是相对路径，拼接完整URL
             if url.hasPrefix("baseurl/") {
                 return APIService.shared.baseURL.replacingOccurrences(of: "/reader3", with: "") + "/" + url
-            }
             return url
         }
         return nil
