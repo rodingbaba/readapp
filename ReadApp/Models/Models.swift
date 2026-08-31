@@ -30,7 +30,7 @@ struct Book: Codable, Identifiable {
         if let url = coverUrl, !url.isEmpty {
             // 如果是相对路径，拼接完整URL
             if url.hasPrefix("baseurl/") {
-                return APIService.shared.baseURL.replacingOccurrences(of: "/api/\(APIService.apiVersion)", with: "") + "/" + url
+                return APIService.shared.baseURL.replacingOccurrences(of: "/reader3", with: "") + "/" + url
             }
             return url
         }

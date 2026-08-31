@@ -181,9 +181,9 @@ class APIService: ObservableObject {
     var baseURL: String {
         let serverURL = UserPreferences.shared.serverURL
         if serverURL.isEmpty {
-            return "http://127.0.0.1:8080/api/\(Self.apiVersion)"
+            return "http://127.0.0.1:8080/reader3"
         }
-        return "\(serverURL)/api/\(Self.apiVersion)"
+        return "\(serverURL)/reader3"
     }
     
     private var accessToken: String {
@@ -427,16 +427,7 @@ class APIService: ObservableObject {
                     queryItems.append(URLQueryItem(name: "bookSourceUrl", value: bookSourceUrl))
                 }
                 
-                let endpoint: String
-                if useSanitization {
-                    endpoint = "getBookContentNew"
-                    if let bookName = bookName, !bookName.isEmpty {
-                        queryItems.append(URLQueryItem(name: "bookname", value: bookName))
-                    }
-                    queryItems.append(URLQueryItem(name: "useReplaceRule", value: "1"))
-                } else {
-                    endpoint = "getBookContent"
-                }
+                let endpoint = "getBookContent"
                 
                 let (data, httpResponse) = try await self.requestWithFailback(endpoint: endpoint, queryItems: queryItems)
                 
@@ -444,32 +435,13 @@ class APIService: ObservableObject {
                     throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "服务器错误"])
                 }
                 
-                if useSanitization {
-                    if let apiResponse = try? JSONDecoder().decode(APIResponse<ChapterContentResponse>.self, from: data),
-                       apiResponse.isSuccess,
-                       let contentResponse = apiResponse.data {
-                        let content = contentResponse.text
-                        await self.chapterCache.set(content, for: cacheKey)
-                        return content
-                    }
-                    
-                    // 兼容旧服务端返回结构
-                    let fallback = try JSONDecoder().decode(APIResponse<String>.self, from: data)
-                    if fallback.isSuccess, let content = fallback.data {
-                        await self.chapterCache.set(content, for: cacheKey)
-                        return content
-                    } else {
-                        throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: fallback.errorMsg ?? "获取章节内容失败"])
-                    }
+                let apiResponse = try JSONDecoder().decode(APIResponse<String>.self, from: data)
+                
+                if apiResponse.isSuccess, let content = apiResponse.data {
+                    await self.chapterCache.set(content, for: cacheKey)
+                    return content
                 } else {
-                    let apiResponse = try JSONDecoder().decode(APIResponse<String>.self, from: data)
-                    
-                    if apiResponse.isSuccess, let content = apiResponse.data {
-                        await self.chapterCache.set(content, for: cacheKey)
-                        return content
-                    } else {
-                        throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: apiResponse.errorMsg ?? "获取章节内容失败"])
-                    }
+                    throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: apiResponse.errorMsg ?? "获取章节内容失败"])
                 }
             }
         }
@@ -510,8 +482,9 @@ class APIService: ObservableObject {
         var queryItems = [
             URLQueryItem(name: "accessToken", value: accessToken),
             URLQueryItem(name: "url", value: bookUrl),
+            URLQueryItem(name: "bookUrl", value: bookUrl),
             URLQueryItem(name: "index", value: "\(index)"),
-            URLQueryItem(name: "pos", value: "\(pos)")
+            URLQueryItem(name: "position", value: "\(Int(pos))")
         ]
         
         if let title = title {
@@ -529,74 +502,22 @@ class APIService: ObservableObject {
     
     // MARK: - 获取 TTS 引擎列表
     func fetchTTSList() async throws -> [HttpTTS] {
-        let queryItems = [
-            URLQueryItem(name: "accessToken", value: accessToken)
-        ]
-        let (data, httpResponse) = try await requestWithFailback(endpoint: "getalltts", queryItems: queryItems)
-        
-        guard httpResponse.statusCode == 200 else {
-            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "服务器错误"])
-        }
-        
-        let apiResponse = try JSONDecoder().decode(APIResponse<[HttpTTS]>.self, from: data)
-        
-        if apiResponse.isSuccess, let ttsList = apiResponse.data {
-            return ttsList
-        } else {
-            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: apiResponse.errorMsg ?? "获取TTS引擎列表失败"])
-        }
+        return []
     }
     
     // MARK: - 获取默认 TTS
     func fetchDefaultTTS() async throws -> String {
-        let queryItems = [
-            URLQueryItem(name: "accessToken", value: accessToken)
-        ]
-        let (data, _) = try await requestWithFailback(endpoint: "getdefaulttts", queryItems: queryItems)
-        
-        let apiResponse = try JSONDecoder().decode(APIResponse<String>.self, from: data)
-        
-        return apiResponse.data ?? ""
+        return ""
     }
     
     // MARK: - 构建 TTS 音频 URL
     func buildTTSAudioURL(ttsId: String, text: String, speechRate: Double) -> URL? {
-        let urlString = "\(baseURL)/tts"
-        guard var components = URLComponents(string: urlString) else {
-            return nil
-        }
-        
-        components.queryItems = [
-            URLQueryItem(name: "accessToken", value: accessToken),
-            URLQueryItem(name: "id", value: ttsId),
-            URLQueryItem(name: "speakText", value: text),
-            URLQueryItem(name: "speechRate", value: "\(speechRate)")
-        ]
-        
-        return components.url
+        return nil
     }
     
     // MARK: - 获取 TTS 音频数据
     func fetchTTSAudioData(ttsId: String, text: String, speechRate: Double, timeoutInterval: TimeInterval = 20) async throws -> Data {
-        let queryItems = [
-            URLQueryItem(name: "accessToken", value: accessToken),
-            URLQueryItem(name: "id", value: ttsId),
-            URLQueryItem(name: "speakText", value: text),
-            URLQueryItem(name: "speechRate", value: "\(speechRate)")
-        ]
-        
-        let (data, response) = try await requestWithFailback(endpoint: "tts", queryItems: queryItems, timeoutInterval: timeoutInterval)
-        
-        guard response.statusCode == 200 else {
-            throw NSError(domain: "APIService", code: response.statusCode, userInfo: [NSLocalizedDescriptionKey: "TTS 服务器返回错误: \(response.statusCode)"])
-        }
-        
-        let contentType = response.value(forHTTPHeaderField: "Content-Type") ?? ""
-        guard contentType.contains("audio"), !data.isEmpty else {
-            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "TTS 返回数据无效"])
-        }
-        
-        return data
+        throw NSError(domain: "APIService", code: 404, userInfo: [NSLocalizedDescriptionKey: "TTS暂未对接reader-next"])
     }
     
     // MARK: - 清除本地缓存
@@ -609,22 +530,8 @@ class APIService: ObservableObject {
     
     // MARK: - 清除所有远程缓存
     func clearAllRemoteCache() async throws {
-        let queryItems = [
-            URLQueryItem(name: "accessToken", value: accessToken)
-        ]
-        let (data, httpResponse) = try await requestWithFailback(endpoint: "cleancaches", queryItems: queryItems)
-        
-        if httpResponse.statusCode != 200 {
-            let responseText = String(data: data, encoding: .utf8) ?? "无法解析响应"
-            throw NSError(domain: "APIService", code: httpResponse.statusCode, 
-                         userInfo: [NSLocalizedDescriptionKey: "服务器错误(状态码: \(httpResponse.statusCode)): \(responseText)"])
-        }
-        
-        let apiResponse = try JSONDecoder().decode(APIResponse<String>.self, from: data)
-        if !apiResponse.isSuccess {
-            throw NSError(domain: "APIService", code: 500, 
-                         userInfo: [NSLocalizedDescriptionKey: apiResponse.errorMsg ?? "清除缓存失败"])
-        }
+        // reader-next 暂不支持清空全部远程缓存，这里仅执行本地清理
+        clearLocalCache()
     }
     
     private func buildChapterCacheKey(bookUrl: String, bookSourceUrl: String?, index: Int, useReplaceRuleSanitization: Bool) -> String {
