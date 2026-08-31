@@ -23,7 +23,7 @@ jobs:
           # Clean and build the project
           xcodebuild clean build \
             -project ReadApp.xcodeproj \
-            -scheme ReadApp \
+            -target ReadApp \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -41,3 +41,4 @@ jobs:
         with:
           name: ReadApp
           path: ReadApp.ipa
+
