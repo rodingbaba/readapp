@@ -179,9 +179,23 @@ class APIService: ObservableObject {
     private let inFlightLock = NSLock()
     
     var baseURL: String {
-        let serverURL = UserPreferences.shared.serverURL
+        var serverURL = UserPreferences.shared.serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if serverURL.isEmpty {
             return "http://127.0.0.1:8080/reader3"
+        }
+        // 去除尾部的 / 或 /#/
+        while serverURL.hasSuffix("/") || serverURL.hasSuffix("/#") {
+            if serverURL.hasSuffix("/#") {
+                serverURL = String(serverURL.dropLast(2))
+            } else if serverURL.hasSuffix("/") {
+                serverURL = String(serverURL.dropLast(1))
+            }
+        }
+        if !serverURL.lowercased().hasPrefix("http://") && !serverURL.lowercased().hasPrefix("https://") {
+            serverURL = "http://" + serverURL
+        }
+        if serverURL.hasSuffix("/reader3") {
+            return serverURL
         }
         return "\(serverURL)/reader3"
     }
@@ -194,16 +208,37 @@ class APIService: ObservableObject {
     
     // MARK: - 请求与重试
     /// 通用请求
-    private func requestWithFailback(endpoint: String, queryItems: [URLQueryItem], timeoutInterval: TimeInterval = 15) async throws -> (Data, HTTPURLResponse) {
+    private func requestWithFailback(
+        endpoint: String,
+        method: String = "GET",
+        queryItems: [URLQueryItem]? = nil,
+        body: Data? = nil,
+        headers: [String: String]? = nil,
+        timeoutInterval: TimeInterval = 15
+    ) async throws -> (Data, HTTPURLResponse) {
         let requestURL = "\(baseURL)/\(endpoint)"
 
         do {
-            return try await performRequest(urlString: requestURL, queryItems: queryItems, timeoutInterval: timeoutInterval)
+            return try await performRequest(
+                urlString: requestURL,
+                method: method,
+                queryItems: queryItems,
+                body: body,
+                headers: headers,
+                timeoutInterval: timeoutInterval
+            )
         } catch let requestError as NSError {
             // 对可恢复网络错误做一次快速重试
             if shouldRetrySameServer(error: requestError) {
                 LogManager.shared.log("请求失败，重试一次: \(requestError.localizedDescription)", category: "网络")
-                return try await performRequest(urlString: requestURL, queryItems: queryItems, timeoutInterval: timeoutInterval)
+                return try await performRequest(
+                    urlString: requestURL,
+                    method: method,
+                    queryItems: queryItems,
+                    body: body,
+                    headers: headers,
+                    timeoutInterval: timeoutInterval
+                )
             }
             throw requestError
         }
@@ -225,20 +260,40 @@ class APIService: ObservableObject {
     }
     
     /// 执行实际的网络请求
-    private func performRequest(urlString: String, queryItems: [URLQueryItem], timeoutInterval: TimeInterval) async throws -> (Data, HTTPURLResponse) {
+    private func performRequest(
+        urlString: String,
+        method: String,
+        queryItems: [URLQueryItem]?,
+        body: Data?,
+        headers: [String: String]?,
+        timeoutInterval: TimeInterval
+    ) async throws -> (Data, HTTPURLResponse) {
         guard var components = URLComponents(string: urlString) else {
             throw NSError(domain: "APIService", code: 400, userInfo: [NSLocalizedDescriptionKey: "无效的URL: \(urlString)"])
         }
 
-        components.queryItems = queryItems
+        if let queryItems = queryItems, !queryItems.isEmpty {
+            components.queryItems = queryItems
+        }
 
         guard let url = components.url else {
             throw NSError(domain: "APIService", code: 400, userInfo: [NSLocalizedDescriptionKey: "无法构建URL"])
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = method
         request.timeoutInterval = timeoutInterval
+
+        if let body = body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+
+        if let headers = headers {
+            for (key, value) in headers {
+                request.setValue(value, forHTTPHeaderField: key)
+            }
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -250,27 +305,28 @@ class APIService: ObservableObject {
     }
     
     // MARK: - 登录
+    private struct LoginRequestBody: Codable {
+        let username: String
+        let password: String
+        let isLogin: Bool
+    }
+    
     func testServerConnection() async throws {
-        let queryItems = [
-            URLQueryItem(name: "username", value: "test"),
-            URLQueryItem(name: "password", value: "test"),
-            URLQueryItem(name: "model", value: "test")
-        ]
-        _ = try await requestWithFailback(endpoint: "login", queryItems: queryItems, timeoutInterval: 10)
+        let body = try JSONEncoder().encode(LoginRequestBody(username: "test", password: "test", isLogin: true))
+        _ = try await requestWithFailback(endpoint: "login", method: "POST", body: body, timeoutInterval: 10)
     }
     
     func login(username: String, password: String) async throws -> String {
-        // 获取设备型号（在主线程同步获取）
-        let deviceModel = await MainActor.run { UIDevice.current.model }
-        
-        let queryItems = [
-            URLQueryItem(name: "username", value: username),
-            URLQueryItem(name: "password", value: password),
-            URLQueryItem(name: "model", value: deviceModel)
-        ]
+        let loginBody = LoginRequestBody(username: username, password: password, isLogin: true)
+        let bodyData = try JSONEncoder().encode(loginBody)
         
         do {
-            let (data, httpResponse) = try await requestWithFailback(endpoint: "login", queryItems: queryItems, timeoutInterval: 15)
+            let (data, httpResponse) = try await requestWithFailback(
+                endpoint: "login",
+                method: "POST",
+                body: bodyData,
+                timeoutInterval: 15
+            )
             
             LogManager.shared.log("HTTP 状态码: \(httpResponse.statusCode)", category: "网络")
             
@@ -491,7 +547,7 @@ class APIService: ObservableObject {
             queryItems.append(URLQueryItem(name: "title", value: title))
         }
         
-        let (data, _) = try await requestWithFailback(endpoint: "saveBookProgress", queryItems: queryItems)
+        let (data, _) = try await requestWithFailback(endpoint: "saveBookProgress", method: "POST", queryItems: queryItems)
         
         let apiResponse = try JSONDecoder().decode(APIResponse<String>.self, from: data)
         
