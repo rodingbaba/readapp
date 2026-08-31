@@ -1,0 +1,43 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+
+      - name: Build unsigned IPA
+        run: |
+          # Clean and build the project
+          xcodebuild clean build \
+            -project ReadApp.xcodeproj \
+            -scheme ReadApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+          # Package into IPA
+          mkdir -p Payload
+          mv build/Build/Products/Release-iphoneos/ReadApp.app Payload/
+          zip -qr ReadApp.ipa Payload/
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReadApp
+          path: ReadApp.ipa
