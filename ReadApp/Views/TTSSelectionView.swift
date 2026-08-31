@@ -31,7 +31,7 @@ struct TTSSelectionView: View {
                         
                         Button("重新加载") {
                             Task {
-                                await loadTTSList()
+                                await loadTTSList(forceRefresh: true)
                             }
                         }
                         .buttonStyle(.bordered)
@@ -68,7 +68,7 @@ struct TTSSelectionView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("刷新") {
                         Task {
-                            await loadTTSList()
+                            await loadTTSList(forceRefresh: true)
                         }
                     }
                 }
@@ -94,12 +94,12 @@ struct TTSSelectionView: View {
         }
     }
     
-    private func loadTTSList() async {
+    private func loadTTSList(forceRefresh: Bool = false) async {
         isLoading = true
         errorMessage = nil
         
         do {
-            ttsList = try await apiService.fetchTTSList()
+            ttsList = try await apiService.fetchTTSList(forceRefresh: forceRefresh)
             
             // 如果还没选择 TTS 引擎，尝试获取默认的
             if preferences.selectedTTSId.isEmpty && !ttsList.isEmpty {

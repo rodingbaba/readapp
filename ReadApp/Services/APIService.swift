@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import UIKit
+import JavaScriptCore
 
 private actor ChapterContentCacheStore {
     struct ManifestEntry: Codable {
@@ -556,9 +557,44 @@ class APIService: ObservableObject {
         }
     }
     
+    private var cachedTTSList: [HttpTTS]?
+    
     // MARK: - 获取 TTS 引擎列表
-    func fetchTTSList() async throws -> [HttpTTS] {
-        return []
+    func fetchTTSList(forceRefresh: Bool = false) async throws -> [HttpTTS] {
+        if !forceRefresh, let cached = cachedTTSList {
+            return cached
+        }
+        
+        guard !accessToken.isEmpty else {
+            throw NSError(domain: "APIService", code: 401, userInfo: [NSLocalizedDescriptionKey: "请先登录"])
+        }
+        
+        let queryItems = [
+            URLQueryItem(name: "accessToken", value: accessToken)
+        ]
+        
+        let (data, httpResponse) = try await requestWithFailback(endpoint: "getSpeechConfig", queryItems: queryItems)
+        
+        guard httpResponse.statusCode == 200 else {
+            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "服务器错误"])
+        }
+        
+        struct SpeechConfigResponse: Codable {
+            let isSuccess: Bool
+            let errorMsg: String?
+            let data: [HttpTTS]?
+        }
+        
+        let apiResponse = try JSONDecoder().decode(SpeechConfigResponse.self, from: data)
+        
+        if apiResponse.isSuccess, let ttsList = apiResponse.data {
+            // 在主线程更新，因为 @Published 可能导致 UI 刷新。等下，这里不是 Published
+            self.cachedTTSList = ttsList
+            return ttsList
+        } else {
+            self.cachedTTSList = []
+            return []
+        }
     }
     
     // MARK: - 获取默认 TTS
@@ -566,14 +602,128 @@ class APIService: ObservableObject {
         return ""
     }
     
-    // MARK: - 构建 TTS 音频 URL
-    func buildTTSAudioURL(ttsId: String, text: String, speechRate: Double) -> URL? {
-        return nil
+    // MARK: - 构建 TTS 音频 URL (内部使用)
+    private func evaluateHttpTtsTemplate(_ template: String, speakText: String, speakSpeed: Int) -> String {
+        let regex = try! NSRegularExpression(pattern: "\\{\\{([\\s\\S]+?)\\}\\}")
+        let nsString = template as NSString
+        var result = template
+        
+        let matches = regex.matches(in: template, options: [], range: NSRange(location: 0, length: nsString.length))
+        guard !matches.isEmpty else { return template }
+        
+        guard let context = JSContext() else { return template }
+        context.setObject(speakText, forKeyedSubscript: "speakText" as NSString)
+        context.setObject(speakSpeed, forKeyedSubscript: "speakSpeed" as NSString)
+        
+        let javaMock = JSValue(newObjectIn: context)!
+        let encodeURI: @convention(block) (String) -> String = { str in
+            return str.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? str
+        }
+        javaMock.setObject(encodeURI, forKeyedSubscript: "encodeURI" as NSString)
+        context.setObject(javaMock, forKeyedSubscript: "java" as NSString)
+        
+        for match in matches.reversed() {
+            let range = match.range(at: 1)
+            let exp = nsString.substring(with: range)
+            
+            if let jsResult = context.evaluateScript(exp), !jsResult.isUndefined, !jsResult.isNull {
+                let evalString = jsResult.toString() ?? ""
+                let fullRange = match.range
+                result = (result as NSString).replacingCharacters(in: fullRange, with: evalString)
+            } else {
+                let fullRange = match.range
+                result = (result as NSString).replacingCharacters(in: fullRange, with: "")
+            }
+        }
+        
+        return result
+    }
+    
+    struct HttpTtsRequestOptions {
+        var method: String
+        var headers: [String: String]?
+        var body: Any?
+    }
+    
+    private func parseHttpTtsTemplate(_ template: String) -> (url: String, options: HttpTtsRequestOptions) {
+        let pattern = "^(.*?)(\\s*,\\s*(\\{.*\\}))$"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return (template.trimmingCharacters(in: .whitespaces), HttpTtsRequestOptions(method: "GET"))
+        }
+        
+        let nsString = template as NSString
+        let matches = regex.matches(in: template, options: [], range: NSRange(location: 0, length: nsString.length))
+        
+        if let match = matches.first {
+            let url = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let jsonStr = nsString.substring(with: match.range(at: 3))
+            
+            if let data = jsonStr.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
+                
+                let method = (json["method"] as? String) ?? "GET"
+                var headers: [String: String]? = nil
+                if let h = json["headers"] as? [String: Any] {
+                    headers = h.mapValues { "\($0)" }
+                } else if let h = json["headers"] as? [String: String] {
+                    headers = h
+                }
+                
+                return (url, HttpTtsRequestOptions(method: method, headers: headers, body: json["body"]))
+            }
+        }
+        return (template.trimmingCharacters(in: .whitespaces), HttpTtsRequestOptions(method: "GET"))
     }
     
     // MARK: - 获取 TTS 音频数据
     func fetchTTSAudioData(ttsId: String, text: String, speechRate: Double, timeoutInterval: TimeInterval = 20) async throws -> Data {
-        throw NSError(domain: "APIService", code: 404, userInfo: [NSLocalizedDescriptionKey: "TTS暂未对接reader-next"])
+        let ttsList = try await fetchTTSList()
+        guard let tts = ttsList.first(where: { $0.id == ttsId }) else {
+            throw NSError(domain: "APIService", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到指定的TTS引擎配置"])
+        }
+        
+        let mappedSpeed = max(0, min(100, Int(round(speechRate * 50))))
+        let evaluatedTemplate = evaluateHttpTtsTemplate(tts.url, speakText: text, speakSpeed: mappedSpeed)
+        
+        let parsed = parseHttpTtsTemplate(evaluatedTemplate)
+        
+        guard let url = URL(string: parsed.url) else {
+            throw NSError(domain: "APIService", code: 400, userInfo: [NSLocalizedDescriptionKey: "TTS URL 解析失败: \(parsed.url)"])
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = parsed.options.method
+        request.timeoutInterval = timeoutInterval
+        
+        if let headers = parsed.options.headers {
+            for (key, value) in headers {
+                request.setValue(value, forHTTPHeaderField: key)
+            }
+        }
+        
+        if let body = parsed.options.body {
+            if let bodyDict = body as? [String: Any] {
+                request.httpBody = try? JSONSerialization.data(withJSONObject: bodyDict)
+                if request.value(forHTTPHeaderField: "Content-Type") == nil {
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                }
+            } else if let bodyStr = body as? String {
+                request.httpBody = bodyStr.data(using: .utf8)
+            }
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "无效的TTS响应"])
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
+            let errorText = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+            throw NSError(domain: "APIService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "TTS 请求失败 (\(httpResponse.statusCode)): \(errorText)"])
+        }
+        
+        return data
     }
     
     // MARK: - 清除本地缓存
