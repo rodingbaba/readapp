@@ -41,6 +41,9 @@ class TTSManager: NSObject, ObservableObject {
 
     // 当前 audioPlayer 实际正在播放的段落索引（章节名用 -1），nil 表示没有音频在播放
     private var playingIndex: Int? = nil
+    
+    // 正在淡出的播放器（保持强引用直到淡出结束）
+    private var fadingPlayers: [AVAudioPlayer] = []
 
     // 下一章预载
     private var nextChapterSentences: [String] = []  // 下一章的段落
@@ -107,13 +110,13 @@ class TTSManager: NSObject, ObservableObject {
         
         commandCenter.nextTrackCommand.isEnabled = true
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
-            self?.nextChapter()
+            self?.nextSentence()
             return .success
         }
         
         commandCenter.previousTrackCommand.isEnabled = true
         commandCenter.previousTrackCommand.addTarget { [weak self] _ in
-            self?.previousChapter()
+            self?.previousSentence()
             return .success
         }
     }
@@ -484,17 +487,49 @@ class TTSManager: NSObject, ObservableObject {
               let player = audioPlayer,
               player.duration > fd * 2 else { return }
 
+        // 在音频结束前 fd 秒触发淡出和下一段的播放
         let fireDelay = player.duration - fd
-        logger.log("⏱️ 淡出将在 \(String(format: "%.2f", fireDelay))s 后触发（时长: \(String(format: "%.2f", player.duration))s）", category: "TTS")
-        fadeOutTimer = Timer.scheduledTimer(withTimeInterval: fireDelay, repeats: false) { [weak self] _ in
-            guard let self, let p = self.audioPlayer, p.isPlaying else { return }
-            p.setVolume(0.0, fadeDuration: self.fadeDuration)
+        logger.log("⏱️ 淡出/无缝交接将在 \(String(format: "%.2f", fireDelay))s 后触发（时长: \(String(format: "%.2f", player.duration))s）", category: "TTS")
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.fadeOutTimer = Timer.scheduledTimer(withTimeInterval: fireDelay, repeats: false) { [weak self] _ in
+                guard let self = self, let p = self.audioPlayer, p.isPlaying else { return }
+                
+                logger.log("🔄 开始淡出并提前切入下一段", category: "TTS")
+                p.setVolume(0.0, fadeDuration: self.fadeDuration)
+                
+                // 将正在淡出的 player 移入 fadingPlayers 防止被释放
+                self.fadingPlayers.append(p)
+                self.audioPlayer = nil
+                
+                // 推进进度并提前播放下一段（相当于砍掉了末尾的静音/重叠播放）
+                self.playingIndex = nil
+                if self.isReadingChapterTitle {
+                    self.isReadingChapterTitle = false
+                } else {
+                    self.currentSentenceIndex += 1
+                }
+                self.speakNextSentence()
+                
+                // 淡出结束后停止并清理旧播放器
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.fadeDuration + 0.1) {
+                    p.stop()
+                    self.fadingPlayers.removeAll { $0 === p }
+                }
+            }
         }
     }
 
     private func cancelFadeOut() {
         fadeOutTimer?.invalidate()
         fadeOutTimer = nil
+        
+        // 清理所有正在淡出的旧播放器
+        for p in fadingPlayers {
+            p.stop()
+        }
+        fadingPlayers.removeAll()
     }
 
     // MARK: - 开始后台任务
