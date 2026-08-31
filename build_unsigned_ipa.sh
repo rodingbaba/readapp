@@ -21,7 +21,9 @@ xcodebuild clean build \
     -derivedDataPath "${BUILD_DIR}" \
     CODE_SIGN_IDENTITY="" \
     CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGN_ENTITLEMENTS="" \
+    ENTITLEMENTS_REQUIRED=NO
 
 echo "查找 .app 文件..."
 APP_PATH=$(find "${BUILD_DIR}" -name "${PROJECT_NAME}.app" -type d | head -n 1)
