@@ -44,63 +44,55 @@ enum LiquidGlassTint {
 }
 
 extension View {
-    /// Apply a Liquid Glass surface (iOS 26+) with a material fallback on older systems.
+    /// Apply a Liquid Glass surface with a material fallback on older systems.
     @ViewBuilder
     func liquidGlass<S: InsettableShape>(
         tint: LiquidGlassTint = .neutral,
         interactive: Bool = false,
         in shape: S = RoundedRectangle(cornerRadius: 22, style: .continuous)
     ) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(glassFor(tint: tint, interactive: interactive), in: shape)
-        } else {
-            self.background(
-                shape
-                    .fill(.regularMaterial)
-                    .overlay(
-                        shape
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.32),
-                                        Color.white.opacity(0.04)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
+        self.background(
+            shape
+                .fill(.regularMaterial)
+                .overlay(
+                    shape
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.32),
+                                    Color.white.opacity(0.04)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
                             )
-                            .blendMode(.overlay)
-                    )
-                    .overlay(
-                        shape.fill(tint.color.opacity(tint.fillOpacity))
-                    )
-                    .overlay(
-                        shape
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.55),
-                                        Color.white.opacity(0.10)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.8
-                            )
-                    )
-                    .shadow(color: Color.black.opacity(0.14), radius: 16, y: 6)
-            )
-        }
+                        )
+                        .blendMode(.overlay)
+                )
+                .overlay(
+                    shape.fill(tint.color.opacity(tint.fillOpacity))
+                )
+                .overlay(
+                    shape
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.55),
+                                    Color.white.opacity(0.10)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.8
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.14), radius: 16, y: 6)
+        )
     }
 
     /// Wrap in a GlassEffectContainer so adjacent glass surfaces blend nicely.
     @ViewBuilder
     func liquidGlassContainer(spacing: CGFloat = 12) -> some View {
-        if #available(iOS 26.0, *) {
-            GlassEffectContainer(spacing: spacing) { self }
-        } else {
-            self
-        }
+        self
     }
 
     /// Hides the default scroll/list background so a custom surface shows through. Inert below iOS 16.
@@ -112,18 +104,6 @@ extension View {
             self
         }
     }
-}
-
-@available(iOS 26.0, *)
-private func glassFor(tint: LiquidGlassTint, interactive: Bool) -> Glass {
-    var glass: Glass = .regular
-    if tint.color != .clear {
-        glass = glass.tint(tint.color.opacity(tint.glassTintOpacity))
-    }
-    if interactive {
-        glass = glass.interactive()
-    }
-    return glass
 }
 
 /// A capsule-shaped icon+label button with liquid glass background.
