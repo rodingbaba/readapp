@@ -73,6 +73,42 @@ struct HttpTTS: Codable, Identifiable {
     let enabledCookieJar: Bool?
     let loginCheckJs: String?
     let lastUpdateTime: Int64?
+    
+    enum CodingKeys: String, CodingKey {
+        case id, userid, name, url, contentType, concurrentRate, loginUrl, loginUi, header, enabledCookieJar, loginCheckJs, lastUpdateTime
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Handle id as Int or String
+        if let idInt = try? container.decode(Int64.self, forKey: .id) {
+            id = String(idInt)
+        } else if let idStr = try? container.decode(String.self, forKey: .id) {
+            id = idStr
+        } else {
+            id = UUID().uuidString
+        }
+        
+        userid = try? container.decodeIfPresent(String.self, forKey: .userid)
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? "Unknown TTS"
+        url = (try? container.decodeIfPresent(String.self, forKey: .url)) ?? ""
+        contentType = try? container.decodeIfPresent(String.self, forKey: .contentType)
+        
+        // Handle concurrentRate as Int or String
+        if let crInt = try? container.decode(Int.self, forKey: .concurrentRate) {
+            concurrentRate = String(crInt)
+        } else {
+            concurrentRate = try? container.decodeIfPresent(String.self, forKey: .concurrentRate)
+        }
+        
+        loginUrl = try? container.decodeIfPresent(String.self, forKey: .loginUrl)
+        loginUi = try? container.decodeIfPresent(String.self, forKey: .loginUi)
+        header = try? container.decodeIfPresent(String.self, forKey: .header)
+        enabledCookieJar = try? container.decodeIfPresent(Bool.self, forKey: .enabledCookieJar)
+        loginCheckJs = try? container.decodeIfPresent(String.self, forKey: .loginCheckJs)
+        lastUpdateTime = try? container.decodeIfPresent(Int64.self, forKey: .lastUpdateTime)
+    }
 }
 
 // MARK: - Login Response Model

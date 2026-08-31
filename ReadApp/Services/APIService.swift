@@ -585,15 +585,21 @@ class APIService: ObservableObject {
             let data: [HttpTTS]?
         }
         
-        let apiResponse = try JSONDecoder().decode(SpeechConfigResponse.self, from: data)
-        
-        if apiResponse.isSuccess, let ttsList = apiResponse.data {
-            // 在主线程更新，因为 @Published 可能导致 UI 刷新。等下，这里不是 Published
-            self.cachedTTSList = ttsList
-            return ttsList
-        } else {
-            self.cachedTTSList = []
-            return []
+        do {
+            let apiResponse = try JSONDecoder().decode(SpeechConfigResponse.self, from: data)
+            
+            if apiResponse.isSuccess, let ttsList = apiResponse.data {
+                // 在主线程更新，因为 @Published 可能导致 UI 刷新。等下，这里不是 Published
+                self.cachedTTSList = ttsList
+                return ttsList
+            } else {
+                self.cachedTTSList = []
+                return []
+            }
+        } catch {
+            let responseStr = String(data: data, encoding: .utf8) ?? ""
+            let prefix = String(responseStr.prefix(200))
+            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "解析失败: \(error.localizedDescription) \n数据片段: \(prefix)"])
         }
     }
     
