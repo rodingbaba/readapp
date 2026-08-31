@@ -105,11 +105,11 @@ struct SettingsView: View {
                     HStack {
                         Text("语速")
                         Spacer()
-                        Text(String(format: "%.0f", preferences.speechRate))
+                        Text(String(format: "%.1fx", preferences.speechRate))
                     }
-                    Slider(value: $preferences.speechRate, in: 5...50, step: 1)
+                    Slider(value: $preferences.speechRate, in: 0.5...3.0, step: 0.1)
                     
-                    Text("语速范围: 5-50 (建议 10-20)")
+                    Text("语速范围: 0.5x - 3.0x (默认 1.0x)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     

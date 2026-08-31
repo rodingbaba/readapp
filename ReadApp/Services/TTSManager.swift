@@ -28,6 +28,7 @@ class TTSManager: NSObject, ObservableObject {
     
     // 预载缓存
     private var audioCache: [Int: Data] = [:]  // 索引 -> 音频数据（索引-1为章节名，0~n为正文段落）
+    private var prewarmedPlayers: [Int: AVAudioPlayer] = [:] // 预解码的播放器
     private var preloadQueue: [Int] = []       // 等待预载的队列
     private var activePreloadIndices: Set<Int> = []  // 正在下载的索引
     private var isPreloading = false           // 是否正在执行预载任务
@@ -44,6 +45,7 @@ class TTSManager: NSObject, ObservableObject {
     // 下一章预载
     private var nextChapterSentences: [String] = []  // 下一章的段落
     private var nextChapterCache: [Int: Data] = [:]  // 下一章的音频缓存（索引-1为章节名）
+    private var nextChapterPrewarmedPlayers: [Int: AVAudioPlayer] = [:] // 下一章预解码播放器
     private var preloadedNextChapterIndex: Int?
     private var nextChapterPreloadToken = UUID()
     
@@ -301,6 +303,7 @@ class TTSManager: NSObject, ObservableObject {
         
         // 清空缓存和预载状态
         audioCache.removeAll()
+        prewarmedPlayers.removeAll()
         preloadedIndices.removeAll()
         preloadQueue.removeAll()
         activePreloadIndices.removeAll()
@@ -308,6 +311,7 @@ class TTSManager: NSObject, ObservableObject {
         preloadWorkerTask?.cancel()
         preloadWorkerTask = nil
         nextChapterCache.removeAll()
+        nextChapterPrewarmedPlayers.removeAll()
         nextChapterSentences.removeAll()
         preloadedNextChapterIndex = nil
         nextChapterPreloadToken = UUID()
@@ -466,10 +470,9 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     private func stopKeepAlive() {
-        if keepAlivePlayer != nil {
-            logger.log("🛑 停止激进保活", category: "TTS")
-            keepAlivePlayer?.stop()
-            keepAlivePlayer = nil
+        if let player = keepAlivePlayer, player.isPlaying {
+            logger.log("🛑 暂停激进保活", category: "TTS")
+            player.pause()
         }
     }
 
@@ -595,6 +598,15 @@ class TTSManager: NSObject, ObservableObject {
             return
         }
         
+        // 检查是否有预载的章节名播放器
+        if let player = prewarmedPlayers[-1] {
+            logger.log("✅ 使用预解码的章节名音频", category: "TTS")
+            playPrewarmedPlayer(player)
+            logger.log("章节名播放中，同时启动内容预载", category: "TTS")
+            startPreloading()
+            return
+        }
+        
         // 检查是否有预载的章节名缓存（使用索引-1表示章节名）
         if let cachedTitleData = audioCache[-1] {
             logger.log("✅ 使用预载的章节名音频", category: "TTS")
@@ -684,7 +696,15 @@ class TTSManager: NSObject, ObservableObject {
     private func playAudio(text: String, ttsId: String, speechRate: Double) {
         isLoading = true
         
-        // 检查缓存
+        // 检查预解码播放器
+        if let player = prewarmedPlayers[currentSentenceIndex] {
+            logger.log("✅ 使用预解码音频 - 索引: \(currentSentenceIndex)", category: "TTS")
+            playPrewarmedPlayer(player)
+            startPreloading()
+            return
+        }
+        
+        // 检查缓存数据
         if let cachedData = audioCache[currentSentenceIndex] {
             logger.log("✅ 使用缓存音频 - 索引: \(currentSentenceIndex)", category: "TTS")
             playAudioWithData(data: cachedData)
@@ -880,6 +900,10 @@ class TTSManager: NSObject, ObservableObject {
             
             return await MainActor.run {
                 audioCache[index] = data
+                if let player = try? AVAudioPlayer(data: data) {
+                    player.prepareToPlay()
+                    prewarmedPlayers[index] = player
+                }
                 preloadedIndices.insert(index)
                 logger.log("✅ 顺序预载成功 - 索引: \(index), 大小: \(data.count)", category: "TTS")
                 return true
@@ -890,6 +914,17 @@ class TTSManager: NSObject, ObservableObject {
         }
     }
     
+    private func playPrewarmedPlayer(_ player: AVAudioPlayer) {
+        cancelFadeOut()
+        audioPlayer?.stop()
+        audioPlayer?.delegate = nil
+        
+        audioPlayer = player
+        audioPlayer?.delegate = self
+        
+        startPlayback()
+    }
+
     private func playAudioWithData(data: Data) {
         do {
             // 先停掉旧 player 并清空 delegate，防止其释放时触发 audioPlayerDidFinishPlaying
@@ -904,14 +939,33 @@ class TTSManager: NSObject, ObservableObject {
             audioPlayer?.delegate = self
             audioPlayer?.prepareToPlay()  // 预解码，让 duration 准确，减少播放延迟
 
-            let fadeEnabled = UserPreferences.shared.ttsFadeEnabled
-            audioPlayer?.volume = fadeEnabled ? fadeStartVolume : 1.0
+            startPlayback()
+        } catch {
+            logger.log("❌ 创建 AVAudioPlayer 失败: \(error.localizedDescription)", category: "TTS错误")
+            logger.log("错误详情: \(error)", category: "TTS错误")
+            isLoading = false
+            audioPlayer?.delegate = nil
+            audioPlayer = nil
+            // 音频数据损坏，清除坏缓存并跳到下一段
+            logger.log("⚠️ 音频解码失败，跳过当前段落", category: "TTS")
+            if !isReadingChapterTitle {
+                audioCache.removeValue(forKey: currentSentenceIndex)
+                prewarmedPlayers.removeValue(forKey: currentSentenceIndex)
+            }
+            currentSentenceIndex += 1
+            speakNextSentence()
+        }
+    }
+    
+    private func startPlayback() {
+        let fadeEnabled = UserPreferences.shared.ttsFadeEnabled
+        audioPlayer?.volume = fadeEnabled ? fadeStartVolume : 1.0
 
-            logger.log("创建 AVAudioPlayer 成功", category: "TTS")
-            logger.log("音频时长: \(audioPlayer?.duration ?? 0) 秒", category: "TTS")
-            logger.log("音频格式: \(audioPlayer?.format.description ?? "unknown")", category: "TTS")
+        logger.log("创建/使用 AVAudioPlayer 成功", category: "TTS")
+        logger.log("音频时长: \(audioPlayer?.duration ?? 0) 秒", category: "TTS")
+        logger.log("音频格式: \(audioPlayer?.format.description ?? "unknown")", category: "TTS")
 
-            let success = audioPlayer?.play() ?? false
+        let success = audioPlayer?.play() ?? false
             if success {
                 // 记录当前 player 实际播放的索引
                 playingIndex = isReadingChapterTitle ? -1 : currentSentenceIndex
@@ -939,20 +993,6 @@ class TTSManager: NSObject, ObservableObject {
                 currentSentenceIndex += 1
                 speakNextSentence()
             }
-        } catch {
-            logger.log("❌ 创建 AVAudioPlayer 失败: \(error.localizedDescription)", category: "TTS错误")
-            logger.log("错误详情: \(error)", category: "TTS错误")
-            isLoading = false
-            audioPlayer?.delegate = nil
-            audioPlayer = nil
-            // 音频数据损坏，清除坏缓存并跳到下一段
-            logger.log("⚠️ 音频解码失败，跳过当前段落", category: "TTS")
-            if !isReadingChapterTitle {
-                audioCache.removeValue(forKey: currentSentenceIndex)
-            }
-            currentSentenceIndex += 1
-            speakNextSentence()
-        }
     }
     
     
@@ -1135,6 +1175,10 @@ class TTSManager: NSObject, ObservableObject {
                     }
                     
                     nextChapterCache[-1] = data
+                    if let player = try? AVAudioPlayer(data: data) {
+                        player.prepareToPlay()
+                        nextChapterPrewarmedPlayers[-1] = player
+                    }
                     logger.log("✅ 下一章章节名预载成功，大小: \(data.count) 字节", category: "TTS")
                 }
             } catch {
@@ -1172,6 +1216,10 @@ class TTSManager: NSObject, ObservableObject {
                     }
                     
                     nextChapterCache[index] = data
+                    if let player = try? AVAudioPlayer(data: data) {
+                        player.prepareToPlay()
+                        nextChapterPrewarmedPlayers[index] = player
+                    }
                     logger.log("✅ 下一章预载成功 - 索引: \(index), 大小: \(data.count) 字节", category: "TTS")
                 }
             } catch {
@@ -1270,12 +1318,14 @@ class TTSManager: NSObject, ObservableObject {
             
             // 将下一章的缓存移动到当前章节（包括章节名索引-1和正文段落）
             audioCache = nextChapterCache
+            prewarmedPlayers = nextChapterPrewarmedPlayers
             preloadedIndices = Set(nextChapterCache.keys)
             preloadQueue.removeAll()
             activePreloadIndices.removeAll()
             
             // 清空下一章缓存
             nextChapterCache.removeAll()
+            nextChapterPrewarmedPlayers.removeAll()
             nextChapterSentences.removeAll()
             preloadedNextChapterIndex = nil
             
