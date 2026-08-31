@@ -7,6 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -38,3 +41,20 @@ jobs:
         with:
           name: ReadApp
           path: build/ReadApp_unsigned.ipa
+
+      - name: Create GitHub Release
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v1.0.${{ github.run_number }}"
+          name: "ReadApp Build ${{ github.run_number }}"
+          body: |
+            自动打包生成的未签名 IPA 文件。
+            - Commit: `${{ github.sha }}`
+            - 构建编号: `${{ github.run_number }}`
+          files: build/ReadApp_unsigned.ipa
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
