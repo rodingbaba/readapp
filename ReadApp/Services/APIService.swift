@@ -579,18 +579,36 @@ class APIService: ObservableObject {
             throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "服务器错误"])
         }
         
+        struct SpeechConfigData: Codable {
+            let provider: String?
+            let httpTtsEngines: [HttpTTS]?
+            let httpTtsActiveId: String?
+            
+            // Allow arbitrary other fields
+            private enum CodingKeys: String, CodingKey {
+                case provider, httpTtsEngines, httpTtsActiveId
+            }
+        }
+        
         struct SpeechConfigResponse: Codable {
             let isSuccess: Bool
             let errorMsg: String?
-            let data: [HttpTTS]?
+            let data: SpeechConfigData?
         }
         
         do {
             let apiResponse = try JSONDecoder().decode(SpeechConfigResponse.self, from: data)
             
-            if apiResponse.isSuccess, let ttsList = apiResponse.data {
-                // 在主线程更新，因为 @Published 可能导致 UI 刷新。等下，这里不是 Published
+            if apiResponse.isSuccess, let configData = apiResponse.data, let ttsList = configData.httpTtsEngines {
                 self.cachedTTSList = ttsList
+                
+                // 可选：如果用户未选择TTS，自动使用后端的 httpTtsActiveId
+                if UserPreferences.shared.selectedTTSId.isEmpty, let activeId = configData.httpTtsActiveId, !activeId.isEmpty {
+                    DispatchQueue.main.async {
+                        UserPreferences.shared.selectedTTSId = activeId
+                    }
+                }
+                
                 return ttsList
             } else {
                 self.cachedTTSList = []
