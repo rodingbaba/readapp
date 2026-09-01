@@ -541,7 +541,7 @@ class APIService: ObservableObject {
             URLQueryItem(name: "url", value: bookUrl),
             URLQueryItem(name: "bookUrl", value: bookUrl),
             URLQueryItem(name: "index", value: "\(index)"),
-            URLQueryItem(name: "position", value: "\(Int(pos))")
+            URLQueryItem(name: "position", value: String(format: "%.4f", pos))
         ]
         
         if let title = title {

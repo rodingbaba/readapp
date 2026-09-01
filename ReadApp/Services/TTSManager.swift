@@ -393,23 +393,15 @@ class TTSManager: NSObject, ObservableObject {
     // MARK: - 判断是否为纯标点或空白
     private func isPunctuationOnly(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return true
+        if trimmed.isEmpty { return true }
+        
+        let regex = try? NSRegularExpression(pattern: "[\\p{L}\\p{N}\\p{M}]", options: [])
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        if let regex = regex, regex.firstMatch(in: trimmed, options: [], range: range) != nil {
+            return false 
         }
         
-        // 定义标点符号集合
-        let punctuationSet = CharacterSet.punctuationCharacters
-            .union(.symbols)
-            .union(.whitespacesAndNewlines)
-        
-        // 检查是否所有字符都是标点、符号或空白
-        for scalar in trimmed.unicodeScalars {
-            if !punctuationSet.contains(scalar) {
-                return false
-            }
-        }
-        
-        return true
+        return true 
     }
     
     // MARK: - 激进保活 (Silent Audio)

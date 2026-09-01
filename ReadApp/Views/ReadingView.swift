@@ -96,6 +96,7 @@ private enum ReaderTextTools {
 struct ReadingView: View {
     let book: Book
 
+    @Environment(\.scenePhase) var scenePhase
     @EnvironmentObject private var apiService: APIService
     @StateObject private var ttsManager = TTSManager.shared
     @StateObject private var preferences = UserPreferences.shared
@@ -231,6 +232,11 @@ struct ReadingView: View {
             } else {
                 showControls = true
                 restoreAfterTTSStopIfNeeded()
+            }
+        }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active && ttsManager.isPlaying {
+                scrollToCurrentTTSPosition()
             }
         }
         .onDisappear {
