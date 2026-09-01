@@ -536,6 +536,7 @@ class APIService: ObservableObject {
     
     // MARK: - 保存阅读进度
     func saveBookProgress(bookUrl: String, index: Int, pos: Double, title: String?) async throws {
+        LogManager.shared.log("准备发送进度: index=\(index), pos=\(pos), title=\(title ?? "nil")", category: "进度同步")
         var queryItems = [
             URLQueryItem(name: "accessToken", value: accessToken),
             URLQueryItem(name: "url", value: bookUrl),

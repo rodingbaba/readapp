@@ -799,18 +799,16 @@ struct ReadingView: View {
 
         if let local = preferences.getReadingProgress(bookUrl: bookUrl),
            local.chapterIndex == chapter.index {
-            return ReaderPosition(
-                chapterIndex: local.chapterIndex,
-                paragraphIndex: min(max(local.paragraphIndex, 0), paragraphCount - 1)
-            )
+            let pos = min(max(local.paragraphIndex, 0), paragraphCount - 1)
+            LogManager.shared.log("恢复进度[本地阅读]: chapter=\(chapter.index), paragraph=\(pos)", category: "进度同步")
+            return ReaderPosition(chapterIndex: local.chapterIndex, paragraphIndex: pos)
         }
 
         if let tts = preferences.getTTSProgress(bookUrl: bookUrl),
            tts.chapterIndex == chapter.index {
-            return ReaderPosition(
-                chapterIndex: tts.chapterIndex,
-                paragraphIndex: min(max(tts.sentenceIndex, 0), paragraphCount - 1)
-            )
+            let pos = min(max(tts.sentenceIndex, 0), paragraphCount - 1)
+            LogManager.shared.log("恢复进度[本地TTS]: chapter=\(chapter.index), paragraph=\(pos)", category: "进度同步")
+            return ReaderPosition(chapterIndex: tts.chapterIndex, paragraphIndex: pos)
         }
 
         if let pos = book.durChapterPos, pos > 0 {
@@ -823,8 +821,11 @@ struct ReadingView: View {
                     break
                 }
             }
+            LogManager.shared.log("恢复进度[服务端durChapterPos]: chapter=\(chapter.index), charOffset=\(pos), 映射到段落=\(targetParagraph)", category: "进度同步")
             return ReaderPosition(chapterIndex: chapter.index, paragraphIndex: targetParagraph)
         }
+        
+        LogManager.shared.log("恢复进度[默认章首]: chapter=\(chapter.index)", category: "进度同步")
 
         return ReaderPosition(chapterIndex: chapter.index, paragraphIndex: 0)
     }
@@ -896,6 +897,7 @@ struct ReadingView: View {
             charOffset += chapter.paragraphs[i].count
         }
         
+        LogManager.shared.log("计算段落偏移: index=\(position.chapterIndex), paragraph=\(clamped), charOffset=\(charOffset)", category: "进度同步")
         return Double(charOffset)
     }
 

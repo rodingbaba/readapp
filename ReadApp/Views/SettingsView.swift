@@ -198,6 +198,15 @@ struct SettingsView: View {
                     }
                 }
                 
+                Section(header: Text("关于")) {
+                    HStack {
+                        Text("版本号")
+                        Spacer()
+                        Text("\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "未知"))")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
                 Section {
                     HStack {
                         Spacer()
