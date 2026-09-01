@@ -410,9 +410,15 @@ struct ReadingView: View {
                     return paragraphCount - 1
                 }()
 
-                let farthestParagraph = [localParagraph, ttsParagraph, metadataParagraph]
-                    .compactMap { $0 }
-                    .max() ?? 0
+                let farthestParagraph: Int
+                if let metadataParagraph = metadataParagraph {
+                    farthestParagraph = metadataParagraph
+                } else {
+                    farthestParagraph = [localParagraph, ttsParagraph]
+                        .compactMap { $0 }
+                        .max() ?? 0
+                }
+                
                 let focusPosition = ReaderPosition(chapterIndex: startIndex, paragraphIndex: farthestParagraph)
 
                 let centerOnTTS = ttsParagraph != nil && farthestParagraph == ttsParagraph
@@ -590,7 +596,7 @@ struct ReadingView: View {
         guard currentChapterIndex < chapters.count - 1 else { return }
         jumpTo(
             position: ReaderPosition(chapterIndex: currentChapterIndex + 1, paragraphIndex: 0),
-            resetIfMissing: !preferences.infiniteScrollReadingEnabled
+            resetIfMissing: true
         )
     }
 
