@@ -400,8 +400,14 @@ struct ReadingView: View {
 
                 let metadataParagraph: Int? = {
                     guard metadataIndex == startIndex, let pos = book.durChapterPos, pos > 0 else { return nil }
-                    let ratio = pos > 1 ? min(pos / 100, 1) : min(pos, 1)
-                    return min(Int((Double(paragraphCount - 1) * ratio).rounded()), paragraphCount - 1)
+                    var currentOffset = 0
+                    for (i, p) in chapter.paragraphs.enumerated() {
+                        currentOffset += p.count
+                        if currentOffset >= Int(pos) {
+                            return i
+                        }
+                    }
+                    return paragraphCount - 1
                 }()
 
                 let farthestParagraph = [localParagraph, ttsParagraph, metadataParagraph]
@@ -808,9 +814,16 @@ struct ReadingView: View {
         }
 
         if let pos = book.durChapterPos, pos > 0 {
-            let ratio = pos > 1 ? min(pos / 100, 1) : min(pos, 1)
-            let paragraphIndex = min(Int((Double(paragraphCount - 1) * ratio).rounded()), paragraphCount - 1)
-            return ReaderPosition(chapterIndex: chapter.index, paragraphIndex: paragraphIndex)
+            var currentOffset = 0
+            var targetParagraph = 0
+            for (i, p) in chapter.paragraphs.enumerated() {
+                currentOffset += p.count
+                if currentOffset >= Int(pos) {
+                    targetParagraph = i
+                    break
+                }
+            }
+            return ReaderPosition(chapterIndex: chapter.index, paragraphIndex: targetParagraph)
         }
 
         return ReaderPosition(chapterIndex: chapter.index, paragraphIndex: 0)
@@ -873,12 +886,17 @@ struct ReadingView: View {
 
     private func normalizedParagraphPosition(_ position: ReaderPosition) -> Double {
         guard let chapter = loadedChapters.first(where: { $0.index == position.chapterIndex }),
-              chapter.paragraphs.count > 1 else {
+              chapter.paragraphs.count > 0 else {
             return 0
         }
 
         let clamped = min(max(position.paragraphIndex, 0), chapter.paragraphs.count - 1)
-        return Double(clamped) / Double(chapter.paragraphs.count - 1)
+        var charOffset = 0
+        for i in 0..<clamped {
+            charOffset += chapter.paragraphs[i].count
+        }
+        
+        return Double(charOffset)
     }
 
     private func resolveInitialChapterIndex(
