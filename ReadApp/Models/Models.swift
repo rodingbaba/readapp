@@ -336,18 +336,12 @@ class UserPreferences: ObservableObject {
         let savedLineSpacing = CGFloat(UserDefaults.standard.float(forKey: "lineSpacing"))
         self.lineSpacing = savedLineSpacing == 0 ? 8 : savedLineSpacing
         
-        let savedSpeechRate = UserDefaults.standard.double(forKey: "speechRate")
-        self.speechRate = savedSpeechRate == 0 ? 1.0 : savedSpeechRate
-        
         self.serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
         self.accessToken = UserDefaults.standard.string(forKey: "accessToken") ?? ""
         self.username = UserDefaults.standard.string(forKey: "username") ?? ""
         self.isLoggedIn = UserDefaults.standard.bool(forKey: "isLoggedIn")
         self.selectedTTSId = UserDefaults.standard.string(forKey: "selectedTTSId") ?? ""
         self.bookshelfSortByRecent = UserDefaults.standard.bool(forKey: "bookshelfSortByRecent")
-        
-        let savedPreloadCount = UserDefaults.standard.integer(forKey: "ttsPreloadCount")
-        self.ttsPreloadCount = savedPreloadCount == 0 ? 10 : savedPreloadCount
         
         if UserDefaults.standard.object(forKey: "useReplaceRuleSanitization") == nil {
             self.useReplaceRuleSanitization = true
@@ -360,7 +354,6 @@ class UserPreferences: ObservableObject {
         } else {
             self.infiniteScrollReadingEnabled = UserDefaults.standard.bool(forKey: "infiniteScrollReadingEnabled")
         }
-
     }
     
     func logout() {
