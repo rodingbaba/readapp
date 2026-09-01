@@ -42,8 +42,8 @@ class TTSManager: NSObject, ObservableObject {
     // 当前 audioPlayer 实际正在播放的段落索引（章节名用 -1），nil 表示没有音频在播放
     private var playingIndex: Int? = nil
     
-    // 正在淡出的播放器（保持强引用直到淡出结束）
-    private var fadingPlayers: [AVAudioPlayer] = []
+    // 正在重叠播放（即将结束）的播放器
+    private var overlappingPlayers: [AVAudioPlayer] = []
 
     // 下一章预载
     private var nextChapterSentences: [String] = []  // 下一章的段落
@@ -56,10 +56,7 @@ class TTSManager: NSObject, ObservableObject {
     private var isReadingChapterTitle = false  // 是否正在朗读章节名
 
     // 淡出 timer
-    private var fadeOutTimer: Timer?
-    private var fadeDuration: TimeInterval { UserPreferences.shared.ttsFadeDuration }
-    private var fadeVolume: Float { Float(UserPreferences.shared.ttsFadeVolume) }
-    private var fadeStartVolume: Float { Float(UserPreferences.shared.ttsFadeStartVolume) }
+    private var overlapTimer: Timer?
 
     // 后台保活
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -357,7 +354,7 @@ class TTSManager: NSObject, ObservableObject {
     func previousSentence() {
         if currentSentenceIndex > 0 {
             currentSentenceIndex -= 1
-            cancelFadeOut()
+            cancelOverlap()
             currentPlayToken = UUID()
             playingIndex = nil
             audioPlayer?.stop()
@@ -377,7 +374,7 @@ class TTSManager: NSObject, ObservableObject {
     func nextSentence() {
         if currentSentenceIndex < sentences.count - 1 {
             currentSentenceIndex += 1
-            cancelFadeOut()
+            cancelOverlap()
             currentPlayToken = UUID()
             playingIndex = nil
             audioPlayer?.stop()
@@ -479,28 +476,28 @@ class TTSManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 淡出调度
-    private func scheduleFadeOut() {
-        cancelFadeOut()
-        let fd = fadeDuration
-        guard UserPreferences.shared.ttsFadeEnabled,
+    // MARK: - 段落间隔缩减（重叠播放）调度
+    private func scheduleOverlap() {
+        cancelOverlap()
+        let ttsId = UserPreferences.shared.selectedTTSId
+        let gapReduction = UserPreferences.shared.getGapReduction(for: ttsId)
+        guard gapReduction > 0,
               let player = audioPlayer,
-              player.duration > fd * 2 else { return }
+              player.duration > gapReduction * 2 else { return }
 
-        // 在音频结束前 fd 秒触发淡出和下一段的播放
-        let fireDelay = player.duration - fd
-        logger.log("⏱️ 淡出/无缝交接将在 \(String(format: "%.2f", fireDelay))s 后触发（时长: \(String(format: "%.2f", player.duration))s）", category: "TTS")
+        // 在音频结束前 gapReduction 秒触发下一段的播放
+        let fireDelay = player.duration - gapReduction
+        logger.log("⏱️ 段落无缝交接将在 \(String(format: "%.2f", fireDelay))s 后触发（时长: \(String(format: "%.2f", player.duration))s）", category: "TTS")
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.fadeOutTimer = Timer.scheduledTimer(withTimeInterval: fireDelay, repeats: false) { [weak self] _ in
+            self.overlapTimer = Timer.scheduledTimer(withTimeInterval: fireDelay, repeats: false) { [weak self] _ in
                 guard let self = self, let p = self.audioPlayer, p.isPlaying else { return }
                 
-                logger.log("🔄 开始淡出并提前切入下一段", category: "TTS")
-                p.setVolume(0.0, fadeDuration: self.fadeDuration)
+                logger.log("🔄 提前切入下一段音频", category: "TTS")
                 
-                // 将正在淡出的 player 移入 fadingPlayers 防止被释放
-                self.fadingPlayers.append(p)
+                // 将即将结束的 player 移入 overlappingPlayers 防止被释放，让它自然播完
+                self.overlappingPlayers.append(p)
                 self.audioPlayer = nil
                 
                 // 推进进度并提前播放下一段（相当于砍掉了末尾的静音/重叠播放）
@@ -512,24 +509,24 @@ class TTSManager: NSObject, ObservableObject {
                 }
                 self.speakNextSentence()
                 
-                // 淡出结束后停止并清理旧播放器
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.fadeDuration + 0.1) {
+                // 等它自然播放完静音后停止并清理旧播放器
+                DispatchQueue.main.asyncAfter(deadline: .now() + gapReduction + 0.1) {
                     p.stop()
-                    self.fadingPlayers.removeAll { $0 === p }
+                    self.overlappingPlayers.removeAll { $0 === p }
                 }
             }
         }
     }
 
-    private func cancelFadeOut() {
-        fadeOutTimer?.invalidate()
-        fadeOutTimer = nil
+    private func cancelOverlap() {
+        overlapTimer?.invalidate()
+        overlapTimer = nil
         
-        // 清理所有正在淡出的旧播放器
-        for p in fadingPlayers {
+        // 清理所有正在重叠播放的旧播放器
+        for p in overlappingPlayers {
             p.stop()
         }
-        fadingPlayers.removeAll()
+        overlappingPlayers.removeAll()
     }
 
     // MARK: - 开始后台任务
@@ -652,7 +649,7 @@ class TTSManager: NSObject, ObservableObject {
             return
         }
         
-        let speechRate = UserPreferences.shared.speechRate
+        let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         
         // 播放音频
         Task {
@@ -713,7 +710,7 @@ class TTSManager: NSObject, ObservableObject {
             return
         }
         
-        let speechRate = UserPreferences.shared.speechRate
+        let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         
         logger.log("朗读句子 \(currentSentenceIndex + 1)/\(totalSentences) - 语速: \(speechRate)", category: "TTS")
         logger.log("句子内容: \(sentence.prefix(50))...", category: "TTS")
@@ -788,7 +785,7 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 开始预载
     private func startPreloading() {
-        let preloadCount = UserPreferences.shared.ttsPreloadCount
+        let preloadCount = UserPreferences.shared.getPreloadCount(for: UserPreferences.shared.selectedTTSId)
         
         guard preloadCount > 0 else {
             checkAndPreloadNextChapter()
@@ -922,7 +919,7 @@ class TTSManager: NSObject, ObservableObject {
             return true
         }
         
-        let speechRate = UserPreferences.shared.speechRate
+        let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         let ttsId = UserPreferences.shared.selectedTTSId
         guard !ttsId.isEmpty else { return false }
         
@@ -950,7 +947,7 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     private func playPrewarmedPlayer(_ player: AVAudioPlayer) {
-        cancelFadeOut()
+        cancelOverlap()
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
         
@@ -963,7 +960,7 @@ class TTSManager: NSObject, ObservableObject {
     private func playAudioWithData(data: Data) {
         do {
             // 先停掉旧 player 并清空 delegate，防止其释放时触发 audioPlayerDidFinishPlaying
-            cancelFadeOut()
+            cancelOverlap()
             audioPlayer?.stop()
             audioPlayer?.delegate = nil
             audioPlayer = nil
@@ -993,9 +990,6 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     private func startPlayback() {
-        let fadeEnabled = UserPreferences.shared.ttsFadeEnabled
-        audioPlayer?.volume = fadeEnabled ? fadeStartVolume : 1.0
-
         logger.log("创建/使用 AVAudioPlayer 成功", category: "TTS")
         logger.log("音频时长: \(audioPlayer?.duration ?? 0) 秒", category: "TTS")
         logger.log("音频格式: \(audioPlayer?.format.description ?? "unknown")", category: "TTS")
@@ -1010,12 +1004,8 @@ class TTSManager: NSObject, ObservableObject {
                 stopKeepAlive()
                 // 延长后台任务
                 beginBackgroundTask()
-                // 淡入
-                if fadeEnabled {
-                    audioPlayer?.setVolume(fadeVolume, fadeDuration: fadeDuration)
-                }
-                // 启动淡出 timer
-                scheduleFadeOut()
+                // 启动重叠 timer，用于跳过间隙
+                scheduleOverlap()
             } else {
                 logger.log("❌ 音频播放失败，跳过当前段落", category: "TTS错误")
                 isLoading = false
@@ -1159,7 +1149,7 @@ class TTSManager: NSObject, ObservableObject {
                     logger.log("下一章分段完成，共 \(nextChapterSentences.count) 段", category: "TTS")
                     
                     // 预载下一章的前几个段落（根据用户的预载设置）
-                    let userPreloadCount = UserPreferences.shared.ttsPreloadCount
+                    let userPreloadCount = UserPreferences.shared.getPreloadCount(for: UserPreferences.shared.selectedTTSId)
                     let preloadCount = min(max(userPreloadCount, 3), nextChapterSentences.count)  // 至少3段，最多到用户设置的值
                     logger.log("开始预载下一章的前 \(preloadCount) 段音频", category: "TTS")
                     
@@ -1188,7 +1178,7 @@ class TTSManager: NSObject, ObservableObject {
         guard nextChapterCache[-1] == nil else { return }
         
         let chapterTitle = chapters[chapterIndex].title
-        let speechRate = UserPreferences.shared.speechRate
+        let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         let ttsId = UserPreferences.shared.selectedTTSId
         
         guard !ttsId.isEmpty else { return }
@@ -1229,7 +1219,7 @@ class TTSManager: NSObject, ObservableObject {
         guard nextChapterCache[index] == nil else { return }
         
         let sentence = nextChapterSentences[index]
-        let speechRate = UserPreferences.shared.speechRate
+        let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         let ttsId = UserPreferences.shared.selectedTTSId
         
         guard !ttsId.isEmpty else { return }
@@ -1274,7 +1264,7 @@ class TTSManager: NSObject, ObservableObject {
             )
         }
         
-        cancelFadeOut()
+        cancelOverlap()
         stopKeepAlive()
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
@@ -1339,7 +1329,7 @@ class TTSManager: NSObject, ObservableObject {
             logger.log("使用已预载的下一章数据", category: "TTS")
 
             // 停止当前播放
-            cancelFadeOut()
+            cancelOverlap()
             currentPlayToken = UUID()
             audioPlayer?.stop()
             audioPlayer?.delegate = nil
@@ -1382,7 +1372,7 @@ class TTSManager: NSObject, ObservableObject {
         logger.log("⚠️ 下一章未预载完成，尝试从缓存或网络加载", category: "TTS")
 
         // 停止当前播放
-        cancelFadeOut()
+        cancelOverlap()
         currentPlayToken = UUID()
         audioPlayer?.stop()
         audioPlayer?.delegate = nil

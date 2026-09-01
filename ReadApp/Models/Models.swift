@@ -163,12 +163,6 @@ class UserPreferences: ObservableObject {
         }
     }
     
-    @Published var speechRate: Double {
-        didSet {
-            UserDefaults.standard.set(speechRate, forKey: "speechRate")
-        }
-    }
-    
     @Published var selectedTTSId: String {
         didSet {
             UserDefaults.standard.set(selectedTTSId, forKey: "selectedTTSId")
@@ -181,10 +175,58 @@ class UserPreferences: ObservableObject {
         }
     }
     
-    @Published var ttsPreloadCount: Int {
-        didSet {
-            UserDefaults.standard.set(ttsPreloadCount, forKey: "ttsPreloadCount")
+    // 语速设置：ttsId -> 语速
+    private var speechRates: [String: Double] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsSpeechRates"),
+               let dict = try? JSONDecoder().decode([String: Double].self, from: data) {
+                return dict
+            }
+            return [:]
         }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "ttsSpeechRates")
+            }
+            objectWillChange.send()
+        }
+    }
+    
+    func getSpeechRate(for ttsId: String) -> Double {
+        return speechRates[ttsId] ?? 1.0
+    }
+    
+    func setSpeechRate(_ rate: Double, for ttsId: String) {
+        var rates = speechRates
+        rates[ttsId] = rate
+        speechRates = rates
+    }
+    
+    // 预载段数：ttsId -> 预载段数
+    private var preloadCounts: [String: Int] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsPreloadCounts"),
+               let dict = try? JSONDecoder().decode([String: Int].self, from: data) {
+                return dict
+            }
+            return [:]
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "ttsPreloadCounts")
+            }
+            objectWillChange.send()
+        }
+    }
+    
+    func getPreloadCount(for ttsId: String) -> Int {
+        return preloadCounts[ttsId] ?? 3
+    }
+    
+    func setPreloadCount(_ count: Int, for ttsId: String) {
+        var counts = preloadCounts
+        counts[ttsId] = count
+        preloadCounts = counts
     }
     
     @Published var useReplaceRuleSanitization: Bool {
@@ -199,28 +241,31 @@ class UserPreferences: ObservableObject {
         }
     }
 
-    @Published var ttsFadeEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(ttsFadeEnabled, forKey: "ttsFadeEnabled")
+    // 减少段落间隔：ttsId -> 缩减时间(秒)
+    private var gapReductions: [String: Double] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsGapReductions"),
+               let dict = try? JSONDecoder().decode([String: Double].self, from: data) {
+                return dict
+            }
+            return [:]
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "ttsGapReductions")
+            }
+            objectWillChange.send()
         }
     }
-
-    @Published var ttsFadeVolume: Double {
-        didSet {
-            UserDefaults.standard.set(ttsFadeVolume, forKey: "ttsFadeVolume")
-        }
+    
+    func getGapReduction(for ttsId: String) -> Double {
+        return gapReductions[ttsId] ?? 0.0
     }
-
-    @Published var ttsFadeDuration: Double {
-        didSet {
-            UserDefaults.standard.set(ttsFadeDuration, forKey: "ttsFadeDuration")
-        }
-    }
-
-    @Published var ttsFadeStartVolume: Double {
-        didSet {
-            UserDefaults.standard.set(ttsFadeStartVolume, forKey: "ttsFadeStartVolume")
-        }
+    
+    func setGapReduction(_ reduction: Double, for ttsId: String) {
+        var reductions = gapReductions
+        reductions[ttsId] = reduction
+        gapReductions = reductions
     }
     
     // TTS进度记录：bookUrl -> (chapterIndex, sentenceIndex)
@@ -316,20 +361,6 @@ class UserPreferences: ObservableObject {
             self.infiniteScrollReadingEnabled = UserDefaults.standard.bool(forKey: "infiniteScrollReadingEnabled")
         }
 
-        if UserDefaults.standard.object(forKey: "ttsFadeEnabled") == nil {
-            self.ttsFadeEnabled = false
-        } else {
-            self.ttsFadeEnabled = UserDefaults.standard.bool(forKey: "ttsFadeEnabled")
-        }
-
-        let savedFadeVolume = UserDefaults.standard.double(forKey: "ttsFadeVolume")
-        self.ttsFadeVolume = savedFadeVolume == 0 ? 0.85 : savedFadeVolume
-
-        let savedFadeDuration = UserDefaults.standard.double(forKey: "ttsFadeDuration")
-        self.ttsFadeDuration = savedFadeDuration == 0 ? 0.4 : savedFadeDuration
-
-        let savedFadeStartVolume = UserDefaults.standard.double(forKey: "ttsFadeStartVolume")
-        self.ttsFadeStartVolume = UserDefaults.standard.object(forKey: "ttsFadeStartVolume") == nil ? 0.8 : savedFadeStartVolume
     }
     
     func logout() {

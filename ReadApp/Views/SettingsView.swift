@@ -102,59 +102,56 @@ struct SettingsView: View {
                         }
                     }
                     
-                    HStack {
-                        Text("语速")
-                        Spacer()
-                        Text(String(format: "%.1fx", preferences.speechRate))
-                    }
-                    Slider(value: $preferences.speechRate, in: 0.5...3.0, step: 0.1)
-                    
-                    Text("语速范围: 0.5x - 3.0x (默认 1.0x)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Stepper(value: $preferences.ttsPreloadCount, in: 0...50) {
+                    if !preferences.selectedTTSId.isEmpty {
+                        let currentTTSId = preferences.selectedTTSId
+                        
+                        let speechRateBinding = Binding<Double>(
+                            get: { preferences.getSpeechRate(for: currentTTSId) },
+                            set: { preferences.setSpeechRate($0, for: currentTTSId) }
+                        )
+                        let preloadCountBinding = Binding<Int>(
+                            get: { preferences.getPreloadCount(for: currentTTSId) },
+                            set: { preferences.setPreloadCount($0, for: currentTTSId) }
+                        )
+                        let gapBinding = Binding<Double>(
+                            get: { preferences.getGapReduction(for: currentTTSId) },
+                            set: { preferences.setGapReduction($0, for: currentTTSId) }
+                        )
+                        
                         HStack {
-                            Text("预载段数")
+                            Text("语速 (当前引擎)")
                             Spacer()
-                            Text("\(preferences.ttsPreloadCount) 段")
-                                .foregroundColor(.secondary)
+                            Text(String(format: "%.1fx", speechRateBinding.wrappedValue))
                         }
-                    }
-                    
-                    Text("提前下载接下来的音频段，减少等待时间。设置越大，切换章节越流畅（建议 10-20 段）")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Toggle("淡入淡出", isOn: $preferences.ttsFadeEnabled)
-                    Text("播放每段音频时渐入，结束前渐出，使段落切换更自然")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    if preferences.ttsFadeEnabled {
-                        HStack {
-                            Text("淡入音量")
-                            Spacer()
-                            Text("\(Int(preferences.ttsFadeStartVolume * 100))%")
-                                .foregroundColor(.secondary)
+                        Slider(value: speechRateBinding, in: 0.5...3.0, step: 0.1)
+                        
+                        Text("语速范围: 0.5x - 3.0x (默认 1.0x)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Stepper(value: preloadCountBinding, in: 0...6) {
+                            HStack {
+                                Text("预载段数 (当前引擎)")
+                                Spacer()
+                                Text("\(preloadCountBinding.wrappedValue) 段")
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        Slider(value: $preferences.ttsFadeStartVolume, in: 0.0...0.9, step: 0.05)
-
-                        HStack {
-                            Text("淡出音量")
-                            Spacer()
-                            Text("\(Int(preferences.ttsFadeVolume * 100))%")
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: $preferences.ttsFadeVolume, in: 0.5...1.0, step: 0.05)
+                        
+                        Text("提前下载接下来的音频段，范围 0-6 段（默认 3 段）")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
 
                         HStack {
-                            Text("渐变时长")
+                            Text("减少段落间隔 (当前引擎)")
                             Spacer()
-                            Text(String(format: "%.1f 秒", preferences.ttsFadeDuration))
+                            Text(String(format: "%.1f 秒", gapBinding.wrappedValue))
                                 .foregroundColor(.secondary)
                         }
-                        Slider(value: $preferences.ttsFadeDuration, in: 0.1...1.0, step: 0.1)
+                        Slider(value: gapBinding, in: 0.0...1.0, step: 0.1)
+                        Text("如果当前发音人在段落末尾带有静音，可增加此值来提前切入下一段，实现无缝衔接")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
                 
